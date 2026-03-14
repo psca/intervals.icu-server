@@ -2,6 +2,15 @@ name = "intervals-mcp"
 main = "src/index.ts"
 compatibility_date = "2026-01-01"
 
-# Secrets set via:
-#   wrangler secret put API_KEY
-#   wrangler secret put ATHLETE_ID
+[vars]
+GITHUB_CLIENT_ID = "your_github_client_id_here"
+
+[[kv_namespaces]]
+binding = "OAUTH_KV"
+id = "35732c2b321e45b589a9f016a1f57e0d"
+
+# Secrets set via wrangler secret put:
+#   API_KEY
+#   ATHLETE_ID
+#   GITHUB_CLIENT_SECRET
+#   GITHUB_ALLOWED_USERS
