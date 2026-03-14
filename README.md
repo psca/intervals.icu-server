@@ -58,7 +58,9 @@ Then point your MCP client to `http://localhost:8787/mcp`.
 
 ### Connect an MCP client
 
-Add to your `.mcp.json`:
+For full client setup across Claude Code, Claude Desktop, and the Desktop Extension, see [psca/intervals.icu-coach](https://github.com/psca/intervals.icu-coach).
+
+Quick start — add to your `.mcp.json`:
 
 ```json
 {
