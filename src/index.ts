@@ -9,10 +9,16 @@ import { registerWellnessTools } from "./tools/wellness.js";
 export interface Env {
   API_KEY: string;
   ATHLETE_ID: string;
+  WORKER_SECRET: string;
 }
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
+    const auth = request.headers.get("Authorization");
+    if (auth !== `Bearer ${env.WORKER_SECRET}`) {
+      return new Response("Unauthorized", { status: 401 });
+    }
+
     const url = new URL(request.url);
     if (!url.pathname.startsWith("/mcp")) {
       return new Response("intervals-mcp worker", { status: 200 });
