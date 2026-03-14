@@ -31,7 +31,7 @@ describe("IntervalsClient", () => {
 
       const calledUrl = mockFetch.mock.calls[0][0] as string;
       expect(calledUrl).toContain("oldest=2026-01-01");
-      expect(calledUrl).toContain("https://api.intervals.icu/api/v1");
+      expect(calledUrl).toContain("https://intervals.icu/api/v1");
     });
 
     it("throws on non-200 response", async () => {

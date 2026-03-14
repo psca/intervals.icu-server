@@ -11,6 +11,19 @@ function defaultDateRange() {
   return { start: start.toISOString().slice(0, 10), end: end.toISOString().slice(0, 10) };
 }
 
+/** Compute sample indices for time-based downsampling. Falls back to stride-based if no time data. */
+function computeSampleIndices(timeData: number[], totalPoints: number, intervalSeconds: number): number[] {
+  if (timeData.length) {
+    const indices = timeData
+      .map((t, i) => ({ t, i }))
+      .filter(({ t }) => t % intervalSeconds === 0)
+      .map(({ i }) => i);
+    if (!indices.length || indices[0] !== 0) indices.unshift(0);
+    return indices;
+  }
+  return Array.from({ length: Math.ceil(totalPoints / intervalSeconds) }, (_, i) => i * intervalSeconds);
+}
+
 export function registerActivityTools(server: McpServer, client: IntervalsClient): void {
 
   server.tool(
@@ -135,25 +148,19 @@ export function registerActivityTools(server: McpServer, client: IntervalsClient
     },
     async ({ activity_id, stream_types, interval_seconds }) => {
       try {
+        // Always request 'time' for accurate time-based sampling
+        const requestTypes = stream_types.split(",").map(s => s.trim()).includes("time")
+          ? stream_types
+          : `time,${stream_types}`;
         const streams = await client.get<Record<string, unknown>[]>(
-          `/activity/${activity_id}/streams`, { types: stream_types }
+          `/activity/${activity_id}/streams`, { types: requestTypes }
         );
         if (!streams?.length) return { content: [{ type: "text" as const, text: "No stream data found." }] };
 
         const timeStream = streams.find(s => s.type === "time");
         const timeData = (timeStream?.data as number[]) ?? [];
-
-        let sampleIndices: number[];
-        if (timeData.length) {
-          sampleIndices = timeData
-            .map((t, i) => ({ t, i }))
-            .filter(({ t }) => t % interval_seconds === 0)
-            .map(({ i }) => i);
-          if (!sampleIndices.length || sampleIndices[0] !== 0) sampleIndices.unshift(0);
-        } else {
-          const total = Math.max(...streams.map(s => ((s.data as unknown[]) ?? []).length));
-          sampleIndices = Array.from({ length: Math.ceil(total / interval_seconds) }, (_, i) => i * interval_seconds);
-        }
+        const total = Math.max(...streams.map(s => ((s.data as unknown[]) ?? []).length));
+        const sampleIndices = computeSampleIndices(timeData, total, interval_seconds);
 
         const output: Record<string, unknown> = {};
         for (const stream of streams) {
@@ -214,14 +221,7 @@ export function registerActivityTools(server: McpServer, client: IntervalsClient
           return { content: [{ type: "text" as const, text: "Weather unavailable: no GPS data for this activity." }] };
         }
 
-        const sampleIndices = timeData.length
-          ? (() => {
-              const idx = timeData.map((t, i) => ({ t, i }))
-                .filter(({ t }) => t % 1800 === 0).map(({ i }) => i);
-              if (!idx.length || idx[0] !== 0) idx.unshift(0);
-              return idx;
-            })()
-          : Array.from({ length: Math.ceil(lats.length / 1800) }, (_, i) => i * 1800);
+        const sampleIndices = computeSampleIndices(timeData, lats.length, 1800);
 
         const sampledLats = sampleIndices.filter(i => i < lats.length).map(i => lats[i]);
         const sampledLngs = sampleIndices.filter(i => i < lngs.length).map(i => lngs[i]);

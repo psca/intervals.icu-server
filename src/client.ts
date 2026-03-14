@@ -1,5 +1,5 @@
 export class IntervalsClient {
-  private static readonly BASE_URL = "https://api.intervals.icu/api/v1";
+  private static readonly BASE_URL = "https://intervals.icu/api/v1";
   readonly authHeader: string;
   readonly athleteId: string;
 

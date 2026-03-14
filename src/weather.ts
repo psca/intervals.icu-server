@@ -119,13 +119,16 @@ export async function computeActivityWeather(
     })
   );
 
-  const n = weatherPoints.length;
   const avg = (arr: number[]) => arr.reduce((a, b) => a + b, 0) / arr.length;
 
   const avgTemp = Math.round(avg(weatherPoints.map(w => w.temp)) * 10) / 10;
   const avgFeels = Math.round(avg(weatherPoints.map(w => w.feelsLike)) * 10) / 10;
   const avgWind = Math.round(avg(weatherPoints.map(w => w.windSpeed)) * 10) / 10;
-  const avgWindDeg = Math.round(avg(weatherPoints.map(w => w.windDeg)) * 10) / 10;
+  // Circular mean for angular data — arithmetic mean is wrong for wind direction
+  // (e.g. mean of 350° and 10° should be 0°, not 180°)
+  const sinSum = weatherPoints.reduce((s, w) => s + Math.sin(w.windDeg * Math.PI / 180), 0);
+  const cosSum = weatherPoints.reduce((s, w) => s + Math.cos(w.windDeg * Math.PI / 180), 0);
+  const avgWindDeg = Math.round(((Math.atan2(sinSum, cosSum) * 180 / Math.PI) + 360) % 360 * 10) / 10;
   const avgClouds = Math.round(avg(weatherPoints.map(w => w.clouds)) * 10) / 10;
   const maxRain = Math.max(...weatherPoints.map(w => w.precipitation));
   const maxSnow = Math.max(...weatherPoints.map(w => w.snowfall));
