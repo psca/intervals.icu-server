@@ -39,6 +39,11 @@ function callbackUrl(request: Request): string {
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
+    const country = (request as any).cf?.country;
+    if (country && country !== "SG") {
+      return new Response("Forbidden", { status: 403 });
+    }
+
     const url = new URL(request.url);
     const path = url.pathname;
 
