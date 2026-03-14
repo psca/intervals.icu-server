@@ -39,13 +39,16 @@ function callbackUrl(request: Request): string {
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
-    const country = (request as any).cf?.country;
-    if (country && country !== "SG") {
-      return new Response("Forbidden", { status: 403 });
-    }
-
     const url = new URL(request.url);
     const path = url.pathname;
+
+    // Geo-lock: only Singapore may access the MCP endpoint
+    if (path.startsWith("/mcp")) {
+      const country = (request as any).cf?.country;
+      if (country && country !== "SG") {
+        return new Response("Forbidden", { status: 403 });
+      }
+    }
 
     // OAuth discovery
     if (path === "/.well-known/oauth-authorization-server" && request.method === "GET") {
