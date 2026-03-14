@@ -1,0 +1,7 @@
+name = "intervals-mcp"
+main = "src/index.ts"
+compatibility_date = "2026-01-01"
+
+# Secrets set via:
+#   wrangler secret put API_KEY
+#   wrangler secret put ATHLETE_ID
