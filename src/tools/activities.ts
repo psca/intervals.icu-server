@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { IntervalsClient } from "../client.js";
 import { formatActivitySummary, formatIntervals } from "../formatting.js";
+import { computeActivityWeather } from "../weather.js";
 
 function defaultDateRange() {
   const end = new Date();
@@ -181,6 +182,60 @@ export function registerActivityTools(server: McpServer, client: IntervalsClient
     }
   );
 
-  // get_activity_weather registered in Task 9 (weather chunk)
+  server.tool(
+    "get_activity_weather",
+    "Get weather conditions for an outdoor activity. Fetches GPS streams + Open-Meteo data server-side. " +
+    "Returns description, feels-like temp, wind speed/direction, headwind/tailwind %, precipitation flags, and ASCII temp bar.",
+    { activity_id: z.string().describe("The Intervals.icu activity ID") },
+    async ({ activity_id }) => {
+      try {
+        const activity = await client.get<Record<string, unknown>>(`/activity/${activity_id}`);
+        const startDateLocal = activity.start_date_local as string | undefined;
+        if (!startDateLocal) return { content: [{ type: "text" as const, text: "Weather unavailable: missing start date." }] };
+
+        const date = startDateLocal.slice(0, 10);
+        const startHour = parseInt(startDateLocal.slice(11, 13), 10);
+
+        const streams = await client.get<Record<string, unknown>[]>(
+          `/activity/${activity_id}/streams`,
+          { types: "time,latlng,bearing" }
+        );
+
+        const timeStream = streams.find(s => s.type === "time");
+        const latlngStream = streams.find(s => s.type === "latlng");
+        const bearingStream = streams.find(s => s.type === "bearing");
+
+        const timeData = (timeStream?.data as number[]) ?? [];
+        const lats = (latlngStream?.data as number[]) ?? [];
+        const lngs = (latlngStream?.data2 as number[]) ?? [];
+        const bearingData = (bearingStream?.data as (number | null)[]) ?? [];
+
+        if (!lats.length || !lngs.length) {
+          return { content: [{ type: "text" as const, text: "Weather unavailable: no GPS data for this activity." }] };
+        }
+
+        const sampleIndices = timeData.length
+          ? (() => {
+              const idx = timeData.map((t, i) => ({ t, i }))
+                .filter(({ t }) => t % 1800 === 0).map(({ i }) => i);
+              if (!idx.length || idx[0] !== 0) idx.unshift(0);
+              return idx;
+            })()
+          : Array.from({ length: Math.ceil(lats.length / 1800) }, (_, i) => i * 1800);
+
+        const sampledLats = sampleIndices.filter(i => i < lats.length).map(i => lats[i]);
+        const sampledLngs = sampleIndices.filter(i => i < lngs.length).map(i => lngs[i]);
+        const sampledTime = sampleIndices.filter(i => i < timeData.length).map(i => timeData[i]);
+
+        const result = await computeActivityWeather(
+          date, startHour, sampledLats, sampledLngs, bearingData, sampledTime, sampleIndices
+        );
+
+        return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
+      } catch (e) {
+        return { content: [{ type: "text" as const, text: `Weather unavailable: ${e}` }] };
+      }
+    }
+  );
 
 } // end registerActivityTools
