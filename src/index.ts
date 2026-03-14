@@ -14,6 +14,11 @@ export interface Env {
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
+    const country = (request as any).cf?.country;
+    if (country && country !== "SG") {
+      return new Response("Forbidden", { status: 403 });
+    }
+
     const auth = request.headers.get("Authorization");
     if (auth !== `Bearer ${env.WORKER_SECRET}`) {
       return new Response("Unauthorized", { status: 401 });
