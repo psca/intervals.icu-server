@@ -1,5 +1,5 @@
 // src/index.ts
-import { OAuthProvider } from "@cloudflare/workers-oauth-provider";
+import { OAuthProvider, OAuthHelpers } from "@cloudflare/workers-oauth-provider";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { IntervalsClient } from "./client.js";
@@ -20,7 +20,7 @@ export interface Env {
   GITHUB_CLIENT_SECRET: string;
   GITHUB_ALLOWED_USERS: string;
   OAUTH_KV: KVNamespace;
-  OAUTH_PROVIDER: any; // injected by OAuthProvider library
+  OAUTH_PROVIDER: OAuthHelpers; // injected by OAuthProvider library
 }
 
 const STATE_TTL = 60 * 10; // 10 minutes
