@@ -1,6 +1,10 @@
 # intervals-mcp
 
-A Cloudflare Worker that serves [intervals.icu](https://intervals.icu) training data as an MCP (Model Context Protocol) server. Provides 12 tools for accessing activities, wellness data, events/workouts, and weather analysis -- designed to be consumed by LLM-powered coaching assistants.
+An MCP (Model Context Protocol) server for [intervals.icu](https://intervals.icu) training data. Provides 12 tools for accessing activities, wellness data, events/workouts, and weather analysis -- designed to be consumed by LLM-powered coaching assistants.
+
+Two modes:
+- **Local (stdio)** -- runs as a local process, no cloud account needed
+- **Remote (Cloudflare Worker)** -- persistent public endpoint with GitHub OAuth
 
 ## Tools
 
@@ -21,9 +25,9 @@ A Cloudflare Worker that serves [intervals.icu](https://intervals.icu) training 
 
 ---
 
-## Option A: Run locally (quick start)
+## Option A: Local stdio (quick start)
 
-No Cloudflare account needed. Runs on your machine, accessible to local MCP clients.
+No cloud account needed. Runs as a local process, communicates with your MCP client over stdio.
 
 ### 1. Prerequisites
 
@@ -38,24 +42,7 @@ cd intervals.icu-server
 npm install
 ```
 
-### 3. Set credentials
-
-Create a `.dev.vars` file in the project root:
-
-```
-API_KEY=your_intervals_icu_api_key
-ATHLETE_ID=i12345
-```
-
-### 4. Start the local server
-
-```bash
-npm run dev
-```
-
-The server runs at `http://localhost:8787`.
-
-### 5. Connect your MCP client
+### 3. Connect your MCP client
 
 Add to your `.mcp.json` (Claude Code / Claude Desktop):
 
@@ -63,16 +50,23 @@ Add to your `.mcp.json` (Claude Code / Claude Desktop):
 {
   "mcpServers": {
     "intervals-mcp": {
-      "type": "http",
-      "url": "http://localhost:8787/mcp"
+      "type": "stdio",
+      "command": "npm",
+      "args": ["run", "stdio"],
+      "env": {
+        "API_KEY": "your_intervals_icu_api_key",
+        "ATHLETE_ID": "i12345"
+      }
     }
   }
 }
 ```
 
+That's it. The MCP client will spawn the server automatically.
+
 ---
 
-## Option B: Deploy to Cloudflare (remote, with OAuth)
+## Option B: Remote Cloudflare Worker (with OAuth)
 
 Runs as a persistent public endpoint. Access is controlled via **GitHub OAuth** -- only whitelisted GitHub users can authenticate. Suitable for use with Claude Web or any remote MCP client.
 
@@ -154,6 +148,7 @@ The worker deploys to `https://intervals-mcp.<your-subdomain>.workers.dev`.
 ```
 src/
   index.ts              CF Worker entry point -- OAuthProvider wraps apiHandler + defaultHandler
+  stdio.ts              Node.js stdio entry point -- spawned by local MCP clients
   auth.ts               GitHub OAuth helpers (exchange code, get username, allowlist check)
   client.ts             intervals.icu HTTP client with Basic auth
   formatting.ts         Human-readable formatters for activities, intervals, events, wellness
@@ -163,6 +158,7 @@ src/
     events.ts           5 event/workout tools
     wellness.ts         1 wellness tool
 test/
+  stdio.test.ts         stdio entry point unit tests
   index.test.ts         OAuth flow + apiHandler integration tests
   auth.test.ts          GitHub OAuth helper unit tests
   client.test.ts        Client unit tests

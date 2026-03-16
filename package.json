@@ -6,11 +6,14 @@
     "deploy": "wrangler deploy",
     "dev": "wrangler dev",
     "start": "wrangler dev",
+    "stdio": "tsx --tsconfig tsconfig.stdio.json src/stdio.ts",
     "test": "vitest run",
     "test:watch": "vitest"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250101.0",
+    "@types/node": "^25.5.0",
+    "tsx": "^4.21.0",
     "typescript": "^5.5.0",
     "vitest": "^3.0.0",
     "wrangler": "^4.73.0"
