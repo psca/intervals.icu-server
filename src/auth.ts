@@ -1,25 +1,5 @@
 // src/auth.ts
 
-export function generateId(): string {
-  const bytes = new Uint8Array(32);
-  crypto.getRandomValues(bytes);
-  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
-}
-
-export async function verifyPkce(
-  codeChallenge: string,
-  codeVerifier: string
-): Promise<boolean> {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(codeVerifier);
-  const digest = await crypto.subtle.digest("SHA-256", data);
-  const base64url = btoa(String.fromCharCode(...new Uint8Array(digest)))
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/, "");
-  return base64url === codeChallenge;
-}
-
 export function isAllowedUser(username: string, allowedUsers: string): boolean {
   return allowedUsers
     .split(",")
@@ -38,20 +18,6 @@ export function buildGitHubAuthUrl(
   url.searchParams.set("scope", "read:user");
   url.searchParams.set("redirect_uri", callbackUrl);
   return url.toString();
-}
-
-export function buildOAuthMetadata(baseUrl: string) {
-  return {
-    issuer: baseUrl,
-    authorization_endpoint: `${baseUrl}/authorize`,
-    token_endpoint: `${baseUrl}/token`,
-    revocation_endpoint: `${baseUrl}/revoke`,
-    registration_endpoint: `${baseUrl}/register`,
-    response_types_supported: ["code"],
-    grant_types_supported: ["authorization_code"],
-    code_challenge_methods_supported: ["S256"],
-    token_endpoint_auth_methods_supported: ["none"],
-  };
 }
 
 export async function exchangeGitHubCode(
