@@ -135,32 +135,3 @@ describe("defaultHandler /callback", () => {
   });
 });
 
-describe("apiHandler geo-lock", () => {
-  it("returns 403 for non-SG requests", async () => {
-    const env = makeEnv();
-    const req = Object.assign(
-      new Request("https://mcp.example.com/mcp", { method: "POST" }),
-      { cf: { country: "US" } }
-    );
-    const res = await apiHandler.fetch(req, env, {});
-    expect(res.status).toBe(403);
-  });
-
-  it("does not geo-block SG requests", async () => {
-    const env = makeEnv();
-    const req = Object.assign(
-      new Request("https://mcp.example.com/mcp", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Accept": "application/json, text/event-stream",
-        },
-        body: JSON.stringify({ jsonrpc: "2.0", method: "tools/list", id: 1 }),
-      }),
-      { cf: { country: "SG" } }
-    );
-    const res = await apiHandler.fetch(req, env, {});
-    // SG requests pass geo-lock and reach the MCP transport; expect a 2xx from tools/list
-    expect(res.status).toBe(200);
-  });
-});

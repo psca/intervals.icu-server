@@ -116,12 +116,6 @@ const defaultHandler = {
 
 const apiHandler = {
   async fetch(request: Request, env: Env, ctx: any): Promise<Response> {
-    // Geo-lock: only Singapore may access the MCP endpoint
-    const country = (request as any).cf?.country;
-    if (country && country !== "SG") {
-      return new Response("Forbidden", { status: 403 });
-    }
-
     const client = new IntervalsClient(env.API_KEY, env.ATHLETE_ID);
     const server = new McpServer({ name: "intervals-mcp", version: "1.0.0" });
     const transport = new WebStandardStreamableHTTPServerTransport({
