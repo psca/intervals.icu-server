@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import { defaultHandler, apiHandler } from "../src/index";
 
 // Minimal mock for env.OAUTH_PROVIDER
@@ -57,6 +57,8 @@ describe("defaultHandler /authorize", () => {
 });
 
 describe("defaultHandler /callback", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
   it("returns 400 when state is missing", async () => {
     const env = makeEnv();
     const req = new Request("https://mcp.example.com/callback?code=ghcode");
@@ -86,8 +88,6 @@ describe("defaultHandler /callback", () => {
     const req = new Request("https://mcp.example.com/callback?code=badcode&state=validstate");
     const res = await defaultHandler.fetch(req, env);
     expect(res.status).toBe(502);
-
-    vi.unstubAllGlobals();
   });
 
   it("returns 403 when user is not allowed", async () => {
@@ -108,8 +108,6 @@ describe("defaultHandler /callback", () => {
     const req = new Request("https://mcp.example.com/callback?code=code&state=validstate");
     const res = await defaultHandler.fetch(req, env);
     expect(res.status).toBe(403);
-
-    vi.unstubAllGlobals();
   });
 
   it("redirects to client after successful auth", async () => {
@@ -134,8 +132,6 @@ describe("defaultHandler /callback", () => {
     const res = await defaultHandler.fetch(req, env);
     expect(res.status).toBe(302);
     expect(res.headers.get("Location")).toContain("claude.ai");
-
-    vi.unstubAllGlobals();
   });
 });
 
@@ -155,12 +151,16 @@ describe("apiHandler geo-lock", () => {
     const req = Object.assign(
       new Request("https://mcp.example.com/mcp", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "Accept": "application/json, text/event-stream",
+        },
         body: JSON.stringify({ jsonrpc: "2.0", method: "tools/list", id: 1 }),
       }),
       { cf: { country: "SG" } }
     );
     const res = await apiHandler.fetch(req, env, {});
-    expect(res.status).not.toBe(403);
+    // SG requests pass geo-lock and reach the MCP transport; expect a 2xx from tools/list
+    expect(res.status).toBe(200);
   });
 });
