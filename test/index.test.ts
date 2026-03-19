@@ -362,3 +362,41 @@ describe("defaultHandler /settings", () => {
   });
 });
 
+describe("apiHandler", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("returns 401 when credentials not found in KV", async () => {
+    const env = makeEnv({ CREDENTIALS_MASTER_KEY: "a".repeat(64) });
+    env.OAUTH_KV.get.mockResolvedValue(null);
+    const ctx = { props: { username: "testuser" } };
+
+    const req = new Request("https://mcp.example.com/mcp", { method: "POST" });
+    const res = await apiHandler.fetch(req, env, ctx);
+    expect(res.status).toBe(401);
+    const body = await res.text();
+    expect(body).toContain("/settings");
+  });
+
+  it("creates IntervalsClient with decrypted credentials", async () => {
+    const { encryptApiKey: enc } = await import("../src/crypto");
+    const masterKey = "a".repeat(64);
+    const { encryptedApiKey, iv } = await enc("real-api-key", "testuser", masterKey);
+
+    const env = makeEnv({ CREDENTIALS_MASTER_KEY: masterKey });
+    // KV "json" mode returns parsed object — mock accordingly
+    env.OAUTH_KV.get.mockResolvedValue({ athleteId: "i123", encryptedApiKey, iv });
+    const ctx = { props: { username: "testuser" } };
+
+    // The McpServer/transport will fail (not a real MCP request), but we just need
+    // to confirm it gets past credential loading without throwing
+    const req = new Request("https://mcp.example.com/mcp", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", method: "tools/list", id: 1 }),
+    });
+    // Should not return 401
+    const res = await apiHandler.fetch(req, env, ctx);
+    expect(res.status).not.toBe(401);
+  });
+});
+

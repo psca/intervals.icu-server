@@ -14,7 +14,7 @@ import {
   validateIntervalsCredentials,
   settingsCallbackUrl,
 } from "./auth.js";
-import { encryptApiKey } from "./crypto.js";
+import { encryptApiKey, decryptApiKey } from "./crypto.js";
 
 export interface Env {
   CREDENTIALS_MASTER_KEY: string;
@@ -347,7 +347,28 @@ const defaultHandler = {
 
 const apiHandler = {
   async fetch(request: Request, env: Env, ctx: any): Promise<Response> {
-    const client = new IntervalsClient(env.API_KEY, env.ATHLETE_ID);
+    const props = ctx.props as { username: string };
+    const creds = await env.OAUTH_KV.get(`credentials:${props.username}`, "json") as {
+      athleteId: string;
+      encryptedApiKey: string;
+      iv: string;
+    } | null;
+
+    if (!creds) {
+      return new Response(
+        "No intervals.icu credentials found. Visit /settings to configure your account.",
+        { status: 401 }
+      );
+    }
+
+    const apiKey = await decryptApiKey(
+      creds.encryptedApiKey,
+      creds.iv,
+      props.username,
+      env.CREDENTIALS_MASTER_KEY
+    );
+
+    const client = new IntervalsClient(apiKey, creds.athleteId);
     const server = new McpServer({ name: "intervals-mcp", version: "1.0.0" });
     const transport = new WebStandardStreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
