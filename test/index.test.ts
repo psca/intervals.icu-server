@@ -159,6 +159,29 @@ describe("defaultHandler /callback", () => {
     );
   });
 
+  it("issues session cookie and redirects to /settings when state is a settings_state", async () => {
+    const env = makeEnv();
+    env.OAUTH_KV.get
+      .mockResolvedValueOnce(null) // oauth_state:<id> not found
+      .mockResolvedValueOnce(JSON.stringify({ placeholder: true })); // settings_state:<id> found
+
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce({ json: () => Promise.resolve({ access_token: "gh_tok" }) })
+      .mockResolvedValueOnce({ json: () => Promise.resolve({ login: "testuser" }) })
+    );
+
+    const req = new Request("https://mcp.example.com/callback?code=code&state=validstate");
+    const res = await defaultHandler.fetch(req, env);
+
+    expect(res.status).toBe(302);
+    expect(res.headers.get("Location")).toBe("https://mcp.example.com/settings");
+    const cookie = res.headers.get("Set-Cookie") ?? "";
+    expect(cookie).toContain("settings_session=");
+    expect(cookie).toContain("HttpOnly");
+    expect(cookie).toContain("SameSite=Lax");
+    expect(env.OAUTH_KV.delete).toHaveBeenCalledWith("settings_state:validstate");
+  });
+
   it("calls completeAuthorization directly when credentials already exist", async () => {
     const env = makeEnv();
     env.OAUTH_KV.get
@@ -284,30 +307,14 @@ describe("defaultHandler /settings", () => {
     );
   });
 
-  it("GET /settings/callback returns 400 on invalid state", async () => {
+  it("GET /settings with no cookie redirects to /callback (not /settings/callback)", async () => {
     const env = makeEnv();
-    env.OAUTH_KV.get.mockResolvedValue(null);
-    const req = new Request("https://mcp.example.com/settings/callback?code=x&state=bad");
-    const res = await defaultHandler.fetch(req, env);
-    expect(res.status).toBe(400);
-  });
-
-  it("GET /settings/callback sets session cookie and redirects to /settings", async () => {
-    const env = makeEnv();
-    env.OAUTH_KV.get.mockResolvedValue(JSON.stringify({ placeholder: true })); // settings_state exists
-    vi.stubGlobal("fetch", vi.fn()
-      .mockResolvedValueOnce({ json: () => Promise.resolve({ access_token: "gh_tok" }) })
-      .mockResolvedValueOnce({ json: () => Promise.resolve({ login: "testuser" }) })
-    );
-
-    const req = new Request("https://mcp.example.com/settings/callback?code=code&state=validstate");
+    const req = new Request("https://mcp.example.com/settings");
     const res = await defaultHandler.fetch(req, env);
     expect(res.status).toBe(302);
-    expect(res.headers.get("Location")).toBe("https://mcp.example.com/settings");
-    const cookie = res.headers.get("Set-Cookie") ?? "";
-    expect(cookie).toContain("settings_session=");
-    expect(cookie).toContain("HttpOnly");
-    expect(cookie).toContain("SameSite=Lax");
+    const location = res.headers.get("Location") ?? "";
+    expect(location).toContain("github.com/login/oauth/authorize");
+    expect(location).toContain("redirect_uri=https%3A%2F%2Fmcp.example.com%2Fcallback");
   });
 
   it("GET /settings with valid session shows form", async () => {

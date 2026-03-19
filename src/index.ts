@@ -12,7 +12,6 @@ import {
   exchangeGitHubCode,
   getGitHubUsername,
   validateIntervalsCredentials,
-  settingsCallbackUrl,
 } from "./auth.js";
 import { encryptApiKey, decryptApiKey } from "./crypto.js";
 
@@ -74,11 +73,49 @@ const defaultHandler = {
       }
 
       const oauthReqInfoRaw = await env.OAUTH_KV.get(`oauth_state:${stateId}`);
-      if (!oauthReqInfoRaw) {
-        return new Response("Invalid or expired state", { status: 400 });
-      }
-      await env.OAUTH_KV.delete(`oauth_state:${stateId}`);
 
+      // Settings flow: state was created by /settings
+      if (!oauthReqInfoRaw) {
+        const settingsStateRaw = await env.OAUTH_KV.get(`settings_state:${stateId}`);
+        if (!settingsStateRaw) {
+          return new Response("Invalid or expired state", { status: 400 });
+        }
+        await env.OAUTH_KV.delete(`settings_state:${stateId}`);
+
+        let username: string;
+        try {
+          const githubToken = await exchangeGitHubCode(
+            githubCode,
+            env.GITHUB_CLIENT_ID,
+            env.GITHUB_CLIENT_SECRET,
+            callbackUrl(request)
+          );
+          username = await getGitHubUsername(githubToken);
+        } catch {
+          return new Response("GitHub auth failed", { status: 502 });
+        }
+
+        if (!isAllowedUser(username, env.GITHUB_ALLOWED_USERS)) {
+          return new Response("Forbidden: user not allowed", { status: 403 });
+        }
+
+        const sessionToken = crypto.randomUUID();
+        await env.OAUTH_KV.put(
+          `settings_session:${sessionToken}`,
+          JSON.stringify({ username }),
+          { expirationTtl: 3600 }
+        );
+
+        return new Response(null, {
+          status: 302,
+          headers: {
+            Location: `${url.origin}/settings`,
+            "Set-Cookie": `settings_session=${sessionToken}; HttpOnly; Secure; SameSite=Lax; Path=/settings`,
+          },
+        });
+      }
+
+      await env.OAUTH_KV.delete(`oauth_state:${stateId}`);
       const oauthReqInfo = JSON.parse(oauthReqInfoRaw);
 
       let username: string;
@@ -226,7 +263,7 @@ const defaultHandler = {
           expirationTtl: 600,
         });
         return Response.redirect(
-          buildGitHubAuthUrl(env.GITHUB_CLIENT_ID, stateId, settingsCallbackUrl(request)),
+          buildGitHubAuthUrl(env.GITHUB_CLIENT_ID, stateId, callbackUrl(request)),
           302
         );
       }
@@ -259,49 +296,6 @@ const defaultHandler = {
           },
         }
       );
-    }
-
-    if (url.pathname === "/settings/callback") {
-      const code = url.searchParams.get("code");
-      const stateId = url.searchParams.get("state");
-
-      if (!code || !stateId) return new Response("Missing code or state", { status: 400 });
-
-      const stateEntry = await env.OAUTH_KV.get(`settings_state:${stateId}`);
-      if (!stateEntry) return new Response("Invalid or expired state", { status: 400 });
-      await env.OAUTH_KV.delete(`settings_state:${stateId}`);
-
-      let username: string;
-      try {
-        const githubToken = await exchangeGitHubCode(
-          code,
-          env.GITHUB_CLIENT_ID,
-          env.GITHUB_CLIENT_SECRET,
-          settingsCallbackUrl(request)
-        );
-        username = await getGitHubUsername(githubToken);
-      } catch {
-        return new Response("GitHub auth failed", { status: 502 });
-      }
-
-      if (!isAllowedUser(username, env.GITHUB_ALLOWED_USERS)) {
-        return new Response("Forbidden: user not allowed", { status: 403 });
-      }
-
-      const sessionToken = crypto.randomUUID();
-      await env.OAUTH_KV.put(
-        `settings_session:${sessionToken}`,
-        JSON.stringify({ username }),
-        { expirationTtl: 3600 }
-      );
-
-      return new Response(null, {
-        status: 302,
-        headers: {
-          Location: `${url.origin}/settings`,
-          "Set-Cookie": `settings_session=${sessionToken}; HttpOnly; Secure; SameSite=Lax; Path=/settings`,
-        },
-      });
     }
 
     if (url.pathname === "/settings/save" && request.method === "POST") {
