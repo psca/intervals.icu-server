@@ -1,28 +1,8 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import {
-  isAllowedUser,
   buildGitHubAuthUrl,
   validateIntervalsCredentials,
-  settingsCallbackUrl,
 } from "../src/auth";
-
-describe("isAllowedUser", () => {
-  it("returns true for exact match", () => {
-    expect(isAllowedUser("alice", "alice,bob")).toBe(true);
-  });
-
-  it("returns true for second in list", () => {
-    expect(isAllowedUser("bob", "alice,bob")).toBe(true);
-  });
-
-  it("returns false when not in list", () => {
-    expect(isAllowedUser("eve", "alice,bob")).toBe(false);
-  });
-
-  it("handles whitespace around names", () => {
-    expect(isAllowedUser("alice", "alice, bob")).toBe(true);
-  });
-});
 
 describe("buildGitHubAuthUrl", () => {
   it("includes client_id, state, and scope", () => {
@@ -63,12 +43,5 @@ describe("validateIntervalsCredentials", () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("network error")));
     const result = await validateIntervalsCredentials("i12345", "mykey");
     expect(result).toBe(false);
-  });
-});
-
-describe("settingsCallbackUrl", () => {
-  it("returns origin + /settings/callback", () => {
-    const req = new Request("https://mcp.example.com/settings");
-    expect(settingsCallbackUrl(req)).toBe("https://mcp.example.com/settings/callback");
   });
 });

@@ -8,7 +8,6 @@ function makeEnv(overrides: Partial<any> = {}): any {
     CREDENTIALS_MASTER_KEY: "00".repeat(32),
     GITHUB_CLIENT_ID: "gh_client",
     GITHUB_CLIENT_SECRET: "gh_secret",
-    GITHUB_ALLOWED_USERS: "testuser",
     OAUTH_KV: {
       get: vi.fn().mockResolvedValue(null),
       put: vi.fn().mockResolvedValue(undefined),
@@ -87,26 +86,6 @@ describe("defaultHandler /callback", () => {
     const req = new Request("https://mcp.example.com/callback?code=badcode&state=validstate");
     const res = await defaultHandler.fetch(req, env);
     expect(res.status).toBe(502);
-  });
-
-  it("returns 403 when user is not allowed", async () => {
-    const env = makeEnv();
-    env.OAUTH_KV.get.mockResolvedValue(
-      JSON.stringify({ clientId: "c", redirectUri: "https://r", scope: [], state: "s" })
-    );
-
-    vi.stubGlobal("fetch", vi.fn()
-      .mockResolvedValueOnce({
-        json: () => Promise.resolve({ access_token: "gh_tok" }),
-      })
-      .mockResolvedValueOnce({
-        json: () => Promise.resolve({ login: "hacker" }),
-      })
-    );
-
-    const req = new Request("https://mcp.example.com/callback?code=code&state=validstate");
-    const res = await defaultHandler.fetch(req, env);
-    expect(res.status).toBe(403);
   });
 
   it("redirects to client after successful auth", async () => {

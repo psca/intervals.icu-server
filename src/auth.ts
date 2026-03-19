@@ -1,12 +1,5 @@
 // src/auth.ts
 
-export function isAllowedUser(username: string, allowedUsers: string): boolean {
-  return allowedUsers
-    .split(",")
-    .map((u) => u.trim())
-    .includes(username);
-}
-
 export function buildGitHubAuthUrl(
   clientId: string,
   state: string,
@@ -70,7 +63,3 @@ export async function validateIntervalsCredentials(
   }
 }
 
-export function settingsCallbackUrl(request: Request): string {
-  const url = new URL(request.url);
-  return `${url.protocol}//${url.host}/settings/callback`;
-}

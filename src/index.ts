@@ -7,7 +7,6 @@ import { registerActivityTools } from "./tools/activities.js";
 import { registerEventTools } from "./tools/events.js";
 import { registerWellnessTools } from "./tools/wellness.js";
 import {
-  isAllowedUser,
   buildGitHubAuthUrl,
   exchangeGitHubCode,
   getGitHubUsername,
@@ -19,7 +18,6 @@ export interface Env {
   CREDENTIALS_MASTER_KEY: string;
   GITHUB_CLIENT_ID: string;
   GITHUB_CLIENT_SECRET: string;
-  GITHUB_ALLOWED_USERS: string;
   OAUTH_KV: KVNamespace;
   OAUTH_PROVIDER: OAuthHelpers; // injected by OAuthProvider library
 }
@@ -95,10 +93,6 @@ const defaultHandler = {
           return new Response("GitHub auth failed", { status: 502 });
         }
 
-        if (!isAllowedUser(username, env.GITHUB_ALLOWED_USERS)) {
-          return new Response("Forbidden: user not allowed", { status: 403 });
-        }
-
         const sessionToken = crypto.randomUUID();
         await env.OAUTH_KV.put(
           `settings_session:${sessionToken}`,
@@ -131,9 +125,6 @@ const defaultHandler = {
         return new Response("GitHub auth failed", { status: 502 });
       }
 
-      if (!isAllowedUser(username, env.GITHUB_ALLOWED_USERS)) {
-        return new Response("Forbidden: user not allowed", { status: 403 });
-      }
 
       // Check if user already has credentials stored
       const existingCreds = await env.OAUTH_KV.get(`credentials:${username}`);
