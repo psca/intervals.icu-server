@@ -11,11 +11,12 @@ import {
   buildGitHubAuthUrl,
   exchangeGitHubCode,
   getGitHubUsername,
+  validateIntervalsCredentials,
 } from "./auth.js";
+import { encryptApiKey } from "./crypto.js";
 
 export interface Env {
-  API_KEY: string;
-  ATHLETE_ID: string;
+  CREDENTIALS_MASTER_KEY: string;
   GITHUB_CLIENT_ID: string;
   GITHUB_CLIENT_SECRET: string;
   GITHUB_ALLOWED_USERS: string;
@@ -96,16 +97,116 @@ const defaultHandler = {
         return new Response("Forbidden: user not allowed", { status: 403 });
       }
 
-      // Hand off to the library — it issues the auth code and redirects the client
-      const { redirectTo } = await env.OAUTH_PROVIDER.completeAuthorization({
-        request: oauthReqInfo,
-        userId: username,
-        metadata: { username },
-        scope: oauthReqInfo.scope,
-        props: { username },
-      });
+      // Check if user already has credentials stored
+      const existingCreds = await env.OAUTH_KV.get(`credentials:${username}`);
+      if (existingCreds) {
+        // Returning user — complete authorization immediately
+        const { redirectTo } = await env.OAUTH_PROVIDER.completeAuthorization({
+          request: oauthReqInfo,
+          userId: username,
+          metadata: { username },
+          scope: oauthReqInfo.scope,
+          props: { username },
+        });
+        return Response.redirect(redirectTo, 302);
+      }
 
-      return Response.redirect(redirectTo, 302);
+      // First-time user — collect credentials before completing authorization
+      const configureStateId = crypto.randomUUID();
+      await env.OAUTH_KV.put(
+        `configure_state:${configureStateId}`,
+        JSON.stringify({ oauthReqInfo, username }),
+        { expirationTtl: 600 }
+      );
+      return Response.redirect(
+        `${new URL(request.url).origin}/configure?state=${configureStateId}`,
+        302
+      );
+    }
+
+    if (url.pathname === "/configure") {
+      if (request.method === "GET") {
+        const stateId = url.searchParams.get("state");
+        if (!stateId) return new Response("Missing state", { status: 400 });
+
+        const raw = await env.OAUTH_KV.get(`configure_state:${stateId}`);
+        if (!raw) return new Response("Invalid or expired state", { status: 400 });
+
+        const error = url.searchParams.get("error");
+        const errorHtml = error === "invalid_credentials"
+          ? `<p style="color:red">Invalid athlete ID or API key. Please try again.</p>`
+          : "";
+
+        return new Response(
+          `<!DOCTYPE html><html><head>
+            <meta charset="utf-8">
+            <title>Configure intervals.icu</title>
+          </head><body>
+            <h1>Connect your intervals.icu account</h1>
+            ${errorHtml}
+            <form method="POST" action="/configure">
+              <input type="hidden" name="state" value="${stateId}">
+              <label>Athlete ID (e.g. i12345)<br>
+                <input type="text" name="athleteId" required autofocus>
+              </label><br><br>
+              <label>API Key<br>
+                <input type="password" name="apiKey" required>
+              </label><br><br>
+              <button type="submit">Save and continue</button>
+            </form>
+          </body></html>`,
+          {
+            headers: {
+              "Content-Type": "text/html; charset=utf-8",
+              "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'",
+            },
+          }
+        );
+      }
+
+      if (request.method === "POST") {
+        const body = await request.formData();
+        const athleteId = body.get("athleteId") as string;
+        const apiKey = body.get("apiKey") as string;
+        const postStateId = body.get("state") as string;
+
+        const raw = await env.OAUTH_KV.get(`configure_state:${postStateId}`);
+        if (!raw) return new Response("Invalid or expired state", { status: 400 });
+
+        // Delete state before processing (replay prevention)
+        await env.OAUTH_KV.delete(`configure_state:${postStateId}`);
+        const { oauthReqInfo, username } = JSON.parse(raw);
+
+        const valid = await validateIntervalsCredentials(athleteId, apiKey);
+        if (!valid) {
+          // Issue a fresh state so the user can retry
+          const newStateId = crypto.randomUUID();
+          await env.OAUTH_KV.put(
+            `configure_state:${newStateId}`,
+            JSON.stringify({ oauthReqInfo, username }),
+            { expirationTtl: 600 }
+          );
+          return Response.redirect(
+            `${url.origin}/configure?state=${newStateId}&error=invalid_credentials`,
+            302
+          );
+        }
+
+        const { encryptedApiKey, iv } = await encryptApiKey(apiKey, username, env.CREDENTIALS_MASTER_KEY);
+        await env.OAUTH_KV.put(
+          `credentials:${username}`,
+          JSON.stringify({ athleteId, encryptedApiKey, iv })
+        );
+
+        const { redirectTo } = await env.OAUTH_PROVIDER.completeAuthorization({
+          request: oauthReqInfo,
+          userId: username,
+          metadata: { username },
+          scope: oauthReqInfo.scope,
+          props: { username },
+        });
+        return Response.redirect(redirectTo, 302);
+      }
     }
 
     return new Response("intervals-mcp worker", { status: 200 });
