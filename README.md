@@ -14,7 +14,7 @@ Two modes:
 | `get_activity_details` | Detailed metrics for a single activity |
 | `get_activity_intervals` | Interval/lap data for structured workouts |
 | `get_activity_streams` | Full time-series data (power, HR, etc.) |
-| `get_activity_stream_sampled` | Downsampled streams for GPS/route analysis |
+| `get_activity_route` | GPS/route data sampled at regular intervals for route analysis and elevation profiles |
 | `get_activity_weather` | Server-side weather pipeline: GPS + Open-Meteo + headwind/tailwind analysis |
 | `get_wellness_data` | HRV, resting HR, CTL/ATL/TSB, sleep, weight |
 | `get_events` | Planned workouts/events by date range |

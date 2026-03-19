@@ -139,8 +139,8 @@ export function registerActivityTools(server: McpServer, client: IntervalsClient
   );
 
   server.tool(
-    "get_activity_stream_sampled",
-    "Get sampled stream data at regular time intervals. Designed for GPS/route analysis without full token cost.",
+    "get_activity_route",
+    "Get GPS/route data for an activity, sampled at regular intervals. Use for route analysis, elevation profiles, or waypoint inspection without full stream token cost.",
     {
       activity_id: z.string().describe("The Intervals.icu activity ID"),
       stream_types: z.string().describe("Comma-separated stream types, e.g. 'latlng,bearing'"),

@@ -40,7 +40,7 @@ describe("createStdioServer", () => {
       "get_activities",
       "get_activity_details",
       "get_activity_intervals",
-      "get_activity_stream_sampled",
+      "get_activity_route",
       "get_activity_streams",
       "get_activity_weather",
       "get_event_by_id",
