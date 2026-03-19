@@ -85,3 +85,10 @@ Set via `npx wrangler secret put <NAME>`:
 ## API base URL
 
 `https://intervals.icu/api/v1` (not `api.intervals.icu` -- that subdomain doesn't exist).
+
+## Testing patterns
+
+- Mock KV with `{ get: vi.fn(), put: vi.fn(), delete: vi.fn() }` — use `mockResolvedValueOnce` chains for sequential calls
+- KV `get(..., "json")` returns a parsed object; plain `get(...)` returns a string — mock return values match accordingly
+- `vi.stubGlobal("fetch", ...)` + `afterEach(() => vi.unstubAllGlobals())` for fetch mocking
+- Web APIs (crypto, fetch, KV) available natively in tests via `@cloudflare/vitest-pool-workers` — no polyfills needed
