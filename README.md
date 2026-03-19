@@ -4,7 +4,7 @@ An MCP (Model Context Protocol) server for [intervals.icu](https://intervals.icu
 
 Two modes:
 - **Local (stdio)** -- runs as a local process, no cloud account needed
-- **Remote (Cloudflare Worker)** -- persistent public endpoint with GitHub OAuth
+- **Remote (Cloudflare Worker)** -- persistent public endpoint with GitHub OAuth and per-user credentials
 
 ## Tools
 
@@ -68,14 +68,13 @@ That's it. The MCP client will spawn the server automatically.
 
 ## Option B: Remote Cloudflare Worker (with OAuth)
 
-Runs as a persistent public endpoint. Access is controlled via **GitHub OAuth** -- only whitelisted GitHub users can authenticate. Suitable for use with Claude Web or any remote MCP client.
+Runs as a persistent public endpoint. Any GitHub user can authenticate and connect their own intervals.icu account. Suitable for use with Claude Web or any remote MCP client.
 
 ### 1. Prerequisites
 
 - [Node.js](https://nodejs.org/) >= 18
 - A [Cloudflare](https://cloudflare.com) account
 - A [GitHub OAuth App](https://github.com/settings/developers) for authentication
-- intervals.icu API key and Athlete ID
 
 ### 2. Clone and install
 
@@ -100,7 +99,7 @@ Update with your GitHub Client ID:
 GITHUB_CLIENT_ID = "<your-github-client-id>"
 ```
 
-Create a KV namespace for OAuth token storage:
+Create a KV namespace for OAuth token and credential storage:
 
 ```bash
 npx wrangler kv namespace create OAUTH_KV
@@ -110,10 +109,10 @@ npx wrangler kv namespace create OAUTH_KV
 ### 5. Set secrets
 
 ```bash
-npx wrangler secret put API_KEY               # intervals.icu API key
-npx wrangler secret put ATHLETE_ID            # athlete ID (e.g. i12345)
+# Generate a random 32-byte key for encrypting per-user credentials
+openssl rand -hex 32 | npx wrangler secret put CREDENTIALS_MASTER_KEY
+
 npx wrangler secret put GITHUB_CLIENT_SECRET  # GitHub OAuth app client secret
-npx wrangler secret put GITHUB_ALLOWED_USERS  # comma-separated GitHub usernames (e.g. "alice,bob")
 ```
 
 ### 6. Deploy
@@ -126,7 +125,7 @@ The worker deploys to `https://intervals-mcp.<your-subdomain>.workers.dev`.
 
 ### 7. Connect your MCP client
 
-**Claude Web:** add the MCP server URL `https://intervals-mcp.<your-subdomain>.workers.dev/mcp`. Claude will redirect you through the GitHub OAuth flow on first use.
+**Claude Web:** add the MCP server URL `https://intervals-mcp.<your-subdomain>.workers.dev/mcp`. Claude will redirect you through the GitHub OAuth flow on first use, then prompt you to enter your intervals.icu athlete ID and API key.
 
 **Claude Desktop / Claude Code** (`.mcp.json`):
 
@@ -141,6 +140,12 @@ The worker deploys to `https://intervals-mcp.<your-subdomain>.workers.dev`.
 }
 ```
 
+On first connection, your MCP client will open a browser window for GitHub login and credential setup.
+
+### Updating credentials
+
+Visit `https://intervals-mcp.<your-subdomain>.workers.dev/settings` to update your intervals.icu athlete ID or API key at any time.
+
 ---
 
 ## Architecture
@@ -149,7 +154,8 @@ The worker deploys to `https://intervals-mcp.<your-subdomain>.workers.dev`.
 src/
   index.ts              CF Worker entry point -- OAuthProvider wraps apiHandler + defaultHandler
   stdio.ts              Node.js stdio entry point -- spawned by local MCP clients
-  auth.ts               GitHub OAuth helpers (exchange code, get username, allowlist check)
+  auth.ts               GitHub OAuth helpers (exchange code, get username, validate intervals credentials)
+  crypto.ts             HKDF+AES-GCM per-user credential encryption
   client.ts             intervals.icu HTTP client with Basic auth
   formatting.ts         Human-readable formatters for activities, intervals, events, wellness
   weather.ts            Open-Meteo integration + headwind/tailwind computation
@@ -166,7 +172,7 @@ test/
   weather.test.ts       Weather utility tests
 ```
 
-**Stateless design** -- each request creates a fresh MCP server instance. No Durable Objects or session state required. OAuth tokens (remote mode) are stored in Cloudflare KV.
+**Stateless design** -- each request creates a fresh MCP server instance. No Durable Objects or session state required. OAuth tokens and encrypted per-user credentials are stored in Cloudflare KV.
 
 ## Testing
 

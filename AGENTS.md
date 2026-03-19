@@ -2,7 +2,7 @@
 
 ## Project overview
 
-TypeScript Cloudflare Worker implementing an MCP server for intervals.icu training data. Provides 12 tools for activities, wellness, events, and weather analysis. Access is controlled via GitHub OAuth -- only whitelisted GitHub users can authenticate. Each user provides their own intervals.icu athlete ID and API key, stored AES-256-GCM encrypted in OAUTH_KV. Credentials are collected during first-time OAuth and manageable via the /settings page.
+TypeScript Cloudflare Worker implementing an MCP server for intervals.icu training data. Provides 12 tools for activities, wellness, events, and weather analysis. Access is controlled via GitHub OAuth — any GitHub user can authenticate. Each user provides their own intervals.icu athlete ID and API key, collected during first-time OAuth via a `/configure` form and stored AES-256-GCM encrypted in OAUTH_KV. Credentials are manageable via the `/settings` page.
 
 ## Tech stack
 
@@ -19,13 +19,12 @@ TypeScript Cloudflare Worker implementing an MCP server for intervals.icu traini
 ```
 src/index.ts          -- CF Worker entry point; OAuthProvider as default export
                          defaultHandler: handles /authorize, /callback, /configure (GET+POST),
-                           /settings, /settings/callback, /settings/save
+                           /settings, /settings/save
                          apiHandler: handles /mcp (only reached after Bearer token validation)
 src/stdio.ts          -- Node.js stdio entry point; spawned by local MCP clients via npm run stdio
                          exports createStdioServer(apiKey, athleteId)
 src/auth.ts           -- GitHub OAuth helpers: buildGitHubAuthUrl, exchangeGitHubCode,
-                         getGitHubUsername, isAllowedUser, validateIntervalsCredentials,
-                         settingsCallbackUrl
+                         getGitHubUsername, validateIntervalsCredentials
 src/crypto.ts         -- HKDF+AES-GCM utilities: hexToBytes, encryptApiKey, decryptApiKey
                          (per-user credential encryption using CREDENTIALS_MASTER_KEY)
 src/client.ts         -- IntervalsClient: HTTP client with Basic auth for intervals.icu API
@@ -47,8 +46,9 @@ test/                 -- Unit tests (vitest)
 ## Key patterns
 
 - **Stateless per-request:** Each request creates a new `McpServer` + `IntervalsClient`. No session state, no Durable Objects. `sessionIdGenerator: undefined` disables MCP sessions.
-- **Auth gating:** `OAuthProvider` validates the Bearer token and calls `apiHandler` only on success. Unauthenticated requests to `/mcp` get a 401 before any MCP work is done — no geo-lock.
-- **GitHub allowlist:** `isAllowedUser()` checks the authenticated GitHub username against `GITHUB_ALLOWED_USERS` (comma-separated secret) during the `/callback` step.
+- **Auth gating:** `OAuthProvider` validates the Bearer token and calls `apiHandler` only on success. Unauthenticated requests to `/mcp` get a 401 before any MCP work is done.
+- **Open access:** Any GitHub user can authenticate. Access is gated by valid intervals.icu credentials, not a username allowlist.
+- **Unified callback:** Both MCP OAuth and settings OAuth redirect to `/callback`. The handler checks `oauth_state:<id>` first; if not found, tries `settings_state:<id>` to determine the flow.
 - **OAuth state:** During `/authorize`, a UUID state ID is stored in KV (`oauth_state:<id>`) with a 10-minute TTL, carrying the `oauthReqInfo` through the GitHub round-trip.
 - **KV key patterns:** `oauth_state:<uuid>` (10min TTL, oauthReqInfo), `configure_state:<uuid>` (10min TTL, {oauthReqInfo, username}), `credentials:<username>` (no TTL, {athleteId, encryptedApiKey, iv}), `settings_state:<uuid>` (10min TTL, placeholder), `settings_session:<uuid>` (1hr TTL, {username}).
 - **Per-user credentials:** `apiHandler` reads `credentials:<username>` from KV using `ctx.props.username`, decrypts the API key with HKDF-derived per-user key, then creates `IntervalsClient`. Returns 401 with `/settings` link if credentials not found.
@@ -73,7 +73,6 @@ npm run deploy     # deploy to Cloudflare (wrangler deploy)
 Set via `npx wrangler secret put <NAME>`:
 - `CREDENTIALS_MASTER_KEY` -- 32-byte hex key for AES-256-GCM encryption (generate: `openssl rand -hex 32`)
 - `GITHUB_CLIENT_SECRET` -- GitHub OAuth app client secret
-- `GITHUB_ALLOWED_USERS` -- comma-separated list of allowed GitHub usernames (e.g. `"alice,bob"`)
 
 ## Env vars (wrangler.toml)
 
@@ -81,7 +80,7 @@ Set via `npx wrangler secret put <NAME>`:
 
 ## KV namespaces (wrangler.toml)
 
-- `OAUTH_KV` -- stores OAuth state, tokens, and registered clients (managed by `@cloudflare/workers-oauth-provider`)
+- `OAUTH_KV` -- stores OAuth state, tokens, registered clients, and encrypted per-user credentials
 
 ## API base URL
 
