@@ -12,6 +12,7 @@ import {
   exchangeGitHubCode,
   getGitHubUsername,
   validateIntervalsCredentials,
+  settingsCallbackUrl,
 } from "./auth.js";
 import { encryptApiKey } from "./crypto.js";
 
@@ -207,6 +208,135 @@ const defaultHandler = {
         });
         return Response.redirect(redirectTo, 302);
       }
+    }
+
+    function getSessionToken(req: Request): string | null {
+      const cookie = req.headers.get("Cookie") ?? "";
+      const match = cookie.match(/settings_session=([^;]+)/);
+      return match ? match[1] : null;
+    }
+
+    if (url.pathname === "/settings") {
+      const sessionToken = getSessionToken(request);
+
+      if (!sessionToken) {
+        // No session — start GitHub OAuth for settings
+        const stateId = crypto.randomUUID();
+        await env.OAUTH_KV.put(`settings_state:${stateId}`, JSON.stringify({ placeholder: true }), {
+          expirationTtl: 600,
+        });
+        return Response.redirect(
+          buildGitHubAuthUrl(env.GITHUB_CLIENT_ID, stateId, settingsCallbackUrl(request)),
+          302
+        );
+      }
+
+      const session = await env.OAUTH_KV.get(`settings_session:${sessionToken}`, "json") as { username: string } | null;
+      if (!session) return new Response("Session expired. <a href='/settings'>Sign in again</a>", { status: 401 });
+
+      const creds = await env.OAUTH_KV.get(`credentials:${session.username}`, "json") as { athleteId: string } | null;
+
+      return new Response(
+        `<!DOCTYPE html><html><head>
+          <meta charset="utf-8">
+          <title>intervals.icu Settings</title>
+        </head><body>
+          <h1>Update intervals.icu credentials</h1>
+          <form method="POST" action="/settings/save">
+            <label>Athlete ID<br>
+              <input type="text" name="athleteId" value="${creds?.athleteId ?? ""}" required>
+            </label><br><br>
+            <label>API Key (leave blank to keep current)<br>
+              <input type="password" name="apiKey" placeholder="••••••••">
+            </label><br><br>
+            <button type="submit">Save</button>
+          </form>
+        </body></html>`,
+        {
+          headers: {
+            "Content-Type": "text/html; charset=utf-8",
+            "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'",
+          },
+        }
+      );
+    }
+
+    if (url.pathname === "/settings/callback") {
+      const code = url.searchParams.get("code");
+      const stateId = url.searchParams.get("state");
+
+      if (!code || !stateId) return new Response("Missing code or state", { status: 400 });
+
+      const stateEntry = await env.OAUTH_KV.get(`settings_state:${stateId}`);
+      if (!stateEntry) return new Response("Invalid or expired state", { status: 400 });
+      await env.OAUTH_KV.delete(`settings_state:${stateId}`);
+
+      let username: string;
+      try {
+        const githubToken = await exchangeGitHubCode(
+          code,
+          env.GITHUB_CLIENT_ID,
+          env.GITHUB_CLIENT_SECRET,
+          settingsCallbackUrl(request)
+        );
+        username = await getGitHubUsername(githubToken);
+      } catch {
+        return new Response("GitHub auth failed", { status: 502 });
+      }
+
+      if (!isAllowedUser(username, env.GITHUB_ALLOWED_USERS)) {
+        return new Response("Forbidden: user not allowed", { status: 403 });
+      }
+
+      const sessionToken = crypto.randomUUID();
+      await env.OAUTH_KV.put(
+        `settings_session:${sessionToken}`,
+        JSON.stringify({ username }),
+        { expirationTtl: 3600 }
+      );
+
+      return new Response(null, {
+        status: 302,
+        headers: {
+          Location: `${url.origin}/settings`,
+          "Set-Cookie": `settings_session=${sessionToken}; HttpOnly; Secure; SameSite=Lax; Path=/settings`,
+        },
+      });
+    }
+
+    if (url.pathname === "/settings/save" && request.method === "POST") {
+      const sessionToken = getSessionToken(request);
+      if (!sessionToken) return new Response("Unauthorized", { status: 401 });
+
+      const session = await env.OAUTH_KV.get(`settings_session:${sessionToken}`, "json") as { username: string } | null;
+      if (!session) return new Response("Session expired", { status: 401 });
+
+      const body = await request.formData();
+      const athleteId = body.get("athleteId") as string;
+      const apiKey = body.get("apiKey") as string;
+
+      const valid = await validateIntervalsCredentials(athleteId, apiKey);
+      if (!valid) {
+        return new Response(
+          `<!DOCTYPE html><html><body>
+            <p>Invalid credentials. <a href="/settings">Try again</a></p>
+          </body></html>`,
+          { status: 400, headers: { "Content-Type": "text/html; charset=utf-8" } }
+        );
+      }
+
+      const { encryptedApiKey, iv } = await encryptApiKey(apiKey, session.username, env.CREDENTIALS_MASTER_KEY);
+      await env.OAUTH_KV.put(
+        `credentials:${session.username}`,
+        JSON.stringify({ athleteId, encryptedApiKey, iv })
+      );
+
+      return new Response(
+        `<!DOCTYPE html><html><body>
+          <p>Credentials updated successfully.</p>
+        </body></html>`,
+        { headers: { "Content-Type": "text/html; charset=utf-8" } }
+      );
     }
 
     return new Response("intervals-mcp worker", { status: 200 });

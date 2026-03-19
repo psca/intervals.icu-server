@@ -268,3 +268,97 @@ describe("defaultHandler /configure", () => {
   });
 });
 
+describe("defaultHandler /settings", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("GET /settings with no cookie redirects to GitHub", async () => {
+    const env = makeEnv();
+    const req = new Request("https://mcp.example.com/settings");
+    const res = await defaultHandler.fetch(req, env);
+    expect(res.status).toBe(302);
+    expect(res.headers.get("Location")).toContain("github.com/login/oauth/authorize");
+    expect(env.OAUTH_KV.put).toHaveBeenCalledWith(
+      expect.stringMatching(/^settings_state:/),
+      expect.any(String),
+      expect.objectContaining({ expirationTtl: 600 })
+    );
+  });
+
+  it("GET /settings/callback returns 400 on invalid state", async () => {
+    const env = makeEnv();
+    env.OAUTH_KV.get.mockResolvedValue(null);
+    const req = new Request("https://mcp.example.com/settings/callback?code=x&state=bad");
+    const res = await defaultHandler.fetch(req, env);
+    expect(res.status).toBe(400);
+  });
+
+  it("GET /settings/callback sets session cookie and redirects to /settings", async () => {
+    const env = makeEnv();
+    env.OAUTH_KV.get.mockResolvedValue(JSON.stringify({ placeholder: true })); // settings_state exists
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce({ json: () => Promise.resolve({ access_token: "gh_tok" }) })
+      .mockResolvedValueOnce({ json: () => Promise.resolve({ login: "testuser" }) })
+    );
+
+    const req = new Request("https://mcp.example.com/settings/callback?code=code&state=validstate");
+    const res = await defaultHandler.fetch(req, env);
+    expect(res.status).toBe(302);
+    expect(res.headers.get("Location")).toBe("https://mcp.example.com/settings");
+    const cookie = res.headers.get("Set-Cookie") ?? "";
+    expect(cookie).toContain("settings_session=");
+    expect(cookie).toContain("HttpOnly");
+    expect(cookie).toContain("SameSite=Lax");
+  });
+
+  it("GET /settings with valid session shows form", async () => {
+    const env = makeEnv();
+    // KV "json" mode returns parsed objects — mock accordingly
+    env.OAUTH_KV.get
+      .mockResolvedValueOnce({ username: "testuser" }) // settings_session:<token>
+      .mockResolvedValueOnce({ athleteId: "i123", encryptedApiKey: "enc", iv: "iv" }); // credentials:<username>
+
+    const req = new Request("https://mcp.example.com/settings", {
+      headers: { Cookie: "settings_session=mytoken" },
+    });
+    const res = await defaultHandler.fetch(req, env);
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    expect(body).toContain("i123");
+    expect(body).toContain("••••••••");
+  });
+
+  it("POST /settings/save returns 401 with no session", async () => {
+    const env = makeEnv();
+    env.OAUTH_KV.get.mockResolvedValue(null); // no session found
+    const req = new Request("https://mcp.example.com/settings/save", {
+      method: "POST",
+      body: new URLSearchParams({ athleteId: "i123", apiKey: "key" }),
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    });
+    const res = await defaultHandler.fetch(req, env);
+    expect(res.status).toBe(401);
+  });
+
+  it("POST /settings/save updates credentials on valid input", async () => {
+    const env = makeEnv({ CREDENTIALS_MASTER_KEY: "a".repeat(64) });
+    // KV "json" mode returns parsed object
+    env.OAUTH_KV.get.mockResolvedValue({ username: "testuser" });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true }));
+
+    const req = new Request("https://mcp.example.com/settings/save", {
+      method: "POST",
+      body: new URLSearchParams({ athleteId: "i999", apiKey: "newkey" }),
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        Cookie: "settings_session=mytoken",
+      },
+    });
+    const res = await defaultHandler.fetch(req, env);
+    expect(res.status).toBe(200);
+    expect(env.OAUTH_KV.put).toHaveBeenCalledWith(
+      "credentials:testuser",
+      expect.stringContaining("i999")
+    );
+  });
+});
+
