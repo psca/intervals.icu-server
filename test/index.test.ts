@@ -28,4 +28,34 @@ describe("auth", () => {
     const res = await worker.fetch(req, env);
     expect(res.status).not.toBe(401);
   });
+
+  it("allows valid multi-user token with no env secrets", async () => {
+    const env = {};
+    const req = new Request("https://example.com/mcp", {
+      method: "POST",
+      headers: { Authorization: "Bearer i12345:validapikey" },
+    });
+    const res = await worker.fetch(req, env as any);
+    expect(res.status).not.toBe(401);
+  });
+
+  it("returns 401 with invalid athleteId format (missing leading i)", async () => {
+    const env = {};
+    const req = new Request("https://example.com/mcp", {
+      method: "POST",
+      headers: { Authorization: "Bearer 12345:myapikey" },
+    });
+    const res = await worker.fetch(req, env as any);
+    expect(res.status).toBe(401);
+  });
+
+  it("returns 401 with empty apiKey", async () => {
+    const env = {};
+    const req = new Request("https://example.com/mcp", {
+      method: "POST",
+      headers: { Authorization: "Bearer i12345:" },
+    });
+    const res = await worker.fetch(req, env as any);
+    expect(res.status).toBe(401);
+  });
 });

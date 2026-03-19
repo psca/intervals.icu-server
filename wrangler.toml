@@ -2,6 +2,11 @@ name = "intervals-mcp"
 main = "src/index.ts"
 compatibility_date = "2026-01-01"
 
-# Secrets set via:
+# Multi-user mode (default): No secrets required.
+# Each user supplies their own credentials in the Authorization header:
+#   Authorization: Bearer {athleteId}:{apiKey}
+#
+# Single-user backward-compat mode: set all three secrets via:
+#   wrangler secret put WORKER_SECRET
 #   wrangler secret put API_KEY
 #   wrangler secret put ATHLETE_ID
