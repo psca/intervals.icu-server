@@ -52,3 +52,25 @@ export async function getGitHubUsername(accessToken: string): Promise<string> {
   if (!data.login) throw new Error("could not get GitHub username");
   return data.login;
 }
+
+export async function validateIntervalsCredentials(
+  athleteId: string,
+  apiKey: string
+): Promise<boolean> {
+  try {
+    const res = await fetch(`https://intervals.icu/api/v1/athlete/${athleteId}`, {
+      headers: {
+        Authorization: "Basic " + btoa(`API_KEY:${apiKey}`),
+        Accept: "application/json",
+      },
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+export function settingsCallbackUrl(request: Request): string {
+  const url = new URL(request.url);
+  return `${url.protocol}//${url.host}/settings/callback`;
+}
