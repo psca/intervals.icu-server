@@ -331,6 +331,25 @@ const defaultHandler = {
       );
     }
 
+    if (url.pathname === "/settings/disconnected") {
+      return new Response(
+        `<!DOCTYPE html><html><head>
+      <meta charset="utf-8">
+      <title>Disconnected</title>
+    </head><body>
+      <h1>Account disconnected</h1>
+      <p>Your intervals.icu credentials have been removed and all MCP clients (e.g. Claude Desktop) have been disconnected.</p>
+      <p><a href="/settings">Set up again</a></p>
+    </body></html>`,
+        {
+          headers: {
+            "Content-Type": "text/html; charset=utf-8",
+            "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'",
+          },
+        }
+      );
+    }
+
     if (url.pathname === "/settings/disconnect" && request.method === "POST") {
       const sessionToken = getSessionToken(request);
       if (!sessionToken) return new Response("Unauthorized", { status: 401 });

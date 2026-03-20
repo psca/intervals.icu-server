@@ -487,6 +487,20 @@ describe("defaultHandler /settings/disconnect", () => {
   });
 });
 
+describe("defaultHandler /settings/disconnected", () => {
+  it("GET returns 200 with HTML confirmation", async () => {
+    const env = makeEnv();
+    const req = new Request("https://mcp.example.com/settings/disconnected");
+    const res = await defaultHandler.fetch(req, env);
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Content-Type")).toContain("text/html");
+    const body = await res.text();
+    expect(body).toContain("disconnected");
+    expect(body).toContain("/settings");
+  });
+});
+
 describe("apiHandler", () => {
   afterEach(() => vi.unstubAllGlobals());
 
