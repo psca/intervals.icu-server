@@ -51,13 +51,15 @@ The danger zone section is only rendered when `creds !== null`. If credentials a
 **Handler sequence:**
 
 1. Read and validate `settings_session` cookie → resolve `username`
-2. Call `env.OAUTH_PROVIDER.listUserGrants(username)` to get all active grants
-3. Call `env.OAUTH_PROVIDER.revokeGrant(grant.id, username)` for each grant (parallel via `Promise.all`)
+2. Paginate `env.OAUTH_PROVIDER.listUserGrants(username)` until `result.cursor` is undefined, accumulating all grant IDs
+3. Call `env.OAUTH_PROVIDER.revokeGrant(grant.id, username)` for each grant via `Promise.allSettled` — best-effort; a single revocation failure does not block the remaining steps
 4. Delete `credentials:<username>` from `OAUTH_KV`
 5. Delete `settings_session:<sessionToken>` from `OAUTH_KV`
-6. Respond with `302` to `/settings/disconnected`, clearing the session cookie
+6. Respond with `302` to `/settings/disconnected`, clearing the session cookie with: `Set-Cookie: settings_session=; Max-Age=0; HttpOnly; Secure; SameSite=Lax; Path=/settings`
 
 **Error handling:** if the session is missing or expired, return `401`. If `listUserGrants` returns an empty list (no active grants), skip step 3 and continue — credentials are still deleted.
+
+**CSRF posture:** relies on `SameSite=Lax` cookie attribute, consistent with `/settings/save`. Cross-site POSTs from third-party origins are blocked by the browser. Deliberate decision appropriate for this application tier.
 
 ---
 
@@ -111,6 +113,8 @@ Revoking a grant invalidates the associated access and refresh tokens at the OAu
 - Unit test: `POST /settings/disconnect` with valid session → grants revoked, credentials deleted, session deleted, 302 to `/settings/disconnected`
 - Unit test: `POST /settings/disconnect` with missing/expired session → 401
 - Unit test: `POST /settings/disconnect` with no active grants → credentials still deleted (graceful)
+- Unit test: `POST /settings/disconnect` with two pages of grants → all grants across both pages are revoked
+- Unit test: `POST /settings/disconnect` where one `revokeGrant` call fails → remaining grants still revoked, credentials and session still deleted
 - Unit test: `GET /settings` with credentials present → response includes disconnect form
 - Unit test: `GET /settings` with no credentials → response does not include disconnect form
 - Unit test: `GET /settings/disconnected` → 200, pure HTML
