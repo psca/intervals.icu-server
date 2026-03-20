@@ -402,6 +402,89 @@ describe("defaultHandler /settings/disconnect", () => {
     const res = await defaultHandler.fetch(req, env);
     expect(res.status).toBe(401);
   });
+
+  it("POST with valid session revokes all grants, deletes credentials and session, redirects", async () => {
+    const env = makeEnv();
+    env.OAUTH_KV.get.mockResolvedValueOnce({ username: "testuser" });
+    env.OAUTH_PROVIDER.listUserGrants.mockResolvedValue({
+      items: [{ id: "grant-1" }, { id: "grant-2" }],
+      cursor: undefined,
+    });
+
+    const req = new Request("https://mcp.example.com/settings/disconnect", {
+      method: "POST",
+      headers: { Cookie: "settings_session=mytoken" },
+    });
+    const res = await defaultHandler.fetch(req, env);
+
+    expect(res.status).toBe(302);
+    expect(res.headers.get("Location")).toBe("https://mcp.example.com/settings/disconnected");
+    expect(res.headers.get("Set-Cookie")).toContain("Max-Age=0");
+    expect(res.headers.get("Set-Cookie")).toContain("Path=/settings");
+    expect(env.OAUTH_PROVIDER.revokeGrant).toHaveBeenCalledWith("grant-1", "testuser");
+    expect(env.OAUTH_PROVIDER.revokeGrant).toHaveBeenCalledWith("grant-2", "testuser");
+    expect(env.OAUTH_KV.delete).toHaveBeenCalledWith("credentials:testuser");
+    expect(env.OAUTH_KV.delete).toHaveBeenCalledWith("settings_session:mytoken");
+  });
+
+  it("POST with no active grants still deletes credentials and session", async () => {
+    const env = makeEnv();
+    env.OAUTH_KV.get.mockResolvedValueOnce({ username: "testuser" });
+    env.OAUTH_PROVIDER.listUserGrants.mockResolvedValue({ items: [], cursor: undefined });
+
+    const req = new Request("https://mcp.example.com/settings/disconnect", {
+      method: "POST",
+      headers: { Cookie: "settings_session=mytoken" },
+    });
+    const res = await defaultHandler.fetch(req, env);
+
+    expect(res.status).toBe(302);
+    expect(env.OAUTH_PROVIDER.revokeGrant).not.toHaveBeenCalled();
+    expect(env.OAUTH_KV.delete).toHaveBeenCalledWith("credentials:testuser");
+    expect(env.OAUTH_KV.delete).toHaveBeenCalledWith("settings_session:mytoken");
+  });
+
+  it("POST paginates listUserGrants and revokes grants across all pages", async () => {
+    const env = makeEnv();
+    env.OAUTH_KV.get.mockResolvedValueOnce({ username: "testuser" });
+    env.OAUTH_PROVIDER.listUserGrants
+      .mockResolvedValueOnce({ items: [{ id: "grant-1" }], cursor: "page2cursor" })
+      .mockResolvedValueOnce({ items: [{ id: "grant-2" }], cursor: undefined });
+
+    const req = new Request("https://mcp.example.com/settings/disconnect", {
+      method: "POST",
+      headers: { Cookie: "settings_session=mytoken" },
+    });
+    await defaultHandler.fetch(req, env);
+
+    expect(env.OAUTH_PROVIDER.listUserGrants).toHaveBeenCalledTimes(2);
+    expect(env.OAUTH_PROVIDER.listUserGrants).toHaveBeenNthCalledWith(1, "testuser");
+    expect(env.OAUTH_PROVIDER.listUserGrants).toHaveBeenNthCalledWith(2, "testuser", { cursor: "page2cursor" });
+    expect(env.OAUTH_PROVIDER.revokeGrant).toHaveBeenCalledWith("grant-1", "testuser");
+    expect(env.OAUTH_PROVIDER.revokeGrant).toHaveBeenCalledWith("grant-2", "testuser");
+  });
+
+  it("POST continues deleting credentials even if one revokeGrant fails", async () => {
+    const env = makeEnv();
+    env.OAUTH_KV.get.mockResolvedValueOnce({ username: "testuser" });
+    env.OAUTH_PROVIDER.listUserGrants.mockResolvedValue({
+      items: [{ id: "grant-1" }, { id: "grant-2" }],
+      cursor: undefined,
+    });
+    env.OAUTH_PROVIDER.revokeGrant
+      .mockResolvedValueOnce(undefined)         // grant-1 succeeds
+      .mockRejectedValueOnce(new Error("KV error")); // grant-2 fails
+
+    const req = new Request("https://mcp.example.com/settings/disconnect", {
+      method: "POST",
+      headers: { Cookie: "settings_session=mytoken" },
+    });
+    const res = await defaultHandler.fetch(req, env);
+
+    expect(res.status).toBe(302);
+    expect(env.OAUTH_KV.delete).toHaveBeenCalledWith("credentials:testuser");
+    expect(env.OAUTH_KV.delete).toHaveBeenCalledWith("settings_session:mytoken");
+  });
 });
 
 describe("apiHandler", () => {

@@ -338,8 +338,32 @@ const defaultHandler = {
       const session = await env.OAUTH_KV.get(`settings_session:${sessionToken}`, "json") as { username: string } | null;
       if (!session) return new Response("Session expired", { status: 401 });
 
-      // Implementation continues in Task 4
-      return new Response("ok");
+      const { username } = session;
+
+      // Paginate through all grants and collect them
+      const grants: Array<{ id: string }> = [];
+      let cursor: string | undefined;
+      do {
+        const result = cursor
+          ? await env.OAUTH_PROVIDER.listUserGrants(username, { cursor })
+          : await env.OAUTH_PROVIDER.listUserGrants(username);
+        grants.push(...result.items);
+        cursor = result.cursor;
+      } while (cursor);
+
+      // Best-effort revocation — a single failure must not block credential deletion
+      await Promise.allSettled(grants.map(g => env.OAUTH_PROVIDER.revokeGrant(g.id, username)));
+
+      await env.OAUTH_KV.delete(`credentials:${username}`);
+      await env.OAUTH_KV.delete(`settings_session:${sessionToken}`);
+
+      return new Response(null, {
+        status: 302,
+        headers: {
+          Location: `${url.origin}/settings/disconnected`,
+          "Set-Cookie": "settings_session=; Max-Age=0; HttpOnly; Secure; SameSite=Lax; Path=/settings",
+        },
+      });
     }
 
     return new Response("intervals-mcp worker", { status: 200 });
