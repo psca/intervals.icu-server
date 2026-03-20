@@ -480,6 +480,15 @@ const defaultHandler = {
 
 const apiHandler = {
   async fetch(request: Request, env: Env, ctx: any): Promise<Response> {
+    // This server is stateless — SSE/GET is not supported. Returning 405 prevents
+    // the Worker from hanging when MCP clients probe for SSE support.
+    if (request.method !== "POST") {
+      return new Response("Method Not Allowed", {
+        status: 405,
+        headers: { Allow: "POST" },
+      });
+    }
+
     const props = ctx.props as { username: string };
     const creds = await env.OAUTH_KV.get(`credentials:${props.username}`, "json") as {
       athleteId: string;
