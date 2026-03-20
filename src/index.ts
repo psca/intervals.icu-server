@@ -24,6 +24,51 @@ export interface Env {
 
 const STATE_TTL = 60 * 10; // 10 minutes
 
+const PAGE_CSS = `
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    font-size: 15px; line-height: 1.5; color: #111;
+    background: #f5f5f7; min-height: 100vh;
+    display: flex; align-items: flex-start; justify-content: center;
+    padding: 48px 16px;
+  }
+  .card {
+    background: #fff; border-radius: 12px;
+    box-shadow: 0 1px 3px rgba(0,0,0,.1), 0 4px 16px rgba(0,0,0,.06);
+    padding: 36px 40px; width: 100%; max-width: 440px;
+  }
+  h1 { font-size: 20px; font-weight: 600; margin-bottom: 4px; }
+  h2 { font-size: 14px; font-weight: 600; color: #c0392b; margin-bottom: 8px; }
+  .subtitle { color: #666; font-size: 14px; margin-bottom: 24px; }
+  .hint { color: #888; font-weight: 400; }
+  .field { margin-bottom: 16px; }
+  label { display: block; font-size: 13px; font-weight: 500; margin-bottom: 5px; color: #333; }
+  input[type=text], input[type=password] {
+    width: 100%; padding: 8px 10px; border: 1px solid #d1d5db; border-radius: 6px;
+    font-size: 14px; font-family: inherit; outline: none; transition: border-color .15s;
+  }
+  input:focus { border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59,130,246,.15); }
+  .btn-primary {
+    margin-top: 8px; padding: 9px 18px; background: #2563eb; color: #fff;
+    border: none; border-radius: 6px; font-size: 14px; font-weight: 500;
+    cursor: pointer; transition: background .15s;
+  }
+  .btn-primary:hover { background: #1d4ed8; }
+  .btn-danger {
+    padding: 8px 16px; background: #fff; color: #dc2626;
+    border: 1px solid #dc2626; border-radius: 6px; font-size: 14px;
+    font-weight: 500; cursor: pointer; transition: background .15s, color .15s;
+  }
+  .btn-danger:hover { background: #dc2626; color: #fff; }
+  .danger-zone {
+    margin-top: 32px; padding-top: 24px; border-top: 1px solid #f0f0f0;
+  }
+  .danger-zone p { font-size: 13px; color: #666; margin-bottom: 12px; }
+  .error { color: #dc2626; font-size: 13px; margin-bottom: 16px; }
+  a { color: #2563eb; }
+`;
+
 function callbackUrl(request: Request): string {
   const url = new URL(request.url);
   return `${url.protocol}//${url.host}/callback`;
@@ -104,7 +149,7 @@ const defaultHandler = {
           status: 302,
           headers: {
             Location: `${url.origin}/settings`,
-            "Set-Cookie": `settings_session=${sessionToken}; HttpOnly; Secure; SameSite=Lax; Path=/settings`,
+            "Set-Cookie": `settings_session=${sessionToken}; Max-Age=3600; HttpOnly; Secure; SameSite=Lax; Path=/settings`,
           },
         });
       }
@@ -163,26 +208,32 @@ const defaultHandler = {
 
         const error = url.searchParams.get("error");
         const errorHtml = error === "invalid_credentials"
-          ? `<p style="color:red">Invalid athlete ID or API key. Please try again.</p>`
+          ? `<p class="error">Invalid athlete ID or API key. Please try again.</p>`
           : "";
 
         return new Response(
           `<!DOCTYPE html><html><head>
             <meta charset="utf-8">
             <title>Configure intervals.icu</title>
+            <style>${PAGE_CSS}</style>
           </head><body>
-            <h1>Connect your intervals.icu account</h1>
-            ${errorHtml}
-            <form method="POST" action="/configure">
-              <input type="hidden" name="state" value="${stateId}">
-              <label>Athlete ID (e.g. i12345)<br>
-                <input type="text" name="athleteId" required autofocus>
-              </label><br><br>
-              <label>API Key<br>
-                <input type="password" name="apiKey" required>
-              </label><br><br>
-              <button type="submit">Save and continue</button>
-            </form>
+            <div class="card">
+              <h1>Connect your intervals.icu account</h1>
+              <p class="subtitle">Enter your intervals.icu credentials to get started.</p>
+              ${errorHtml}
+              <form method="POST" action="/configure">
+                <input type="hidden" name="state" value="${stateId}">
+                <div class="field">
+                  <label for="athleteId">Athlete ID <span class="hint">(e.g. i12345)</span></label>
+                  <input type="text" id="athleteId" name="athleteId" required autofocus>
+                </div>
+                <div class="field">
+                  <label for="apiKey">API Key</label>
+                  <input type="password" id="apiKey" name="apiKey" required>
+                </div>
+                <button type="submit" class="btn-primary">Save and continue</button>
+              </form>
+            </div>
           </body></html>`,
           {
             headers: {
@@ -260,7 +311,17 @@ const defaultHandler = {
       }
 
       const session = await env.OAUTH_KV.get(`settings_session:${sessionToken}`, "json") as { username: string } | null;
-      if (!session) return new Response("Session expired. <a href='/settings'>Sign in again</a>", { status: 401 });
+      if (!session) {
+        // Session expired in KV — restart GitHub OAuth (clears stale cookie on success)
+        const stateId = crypto.randomUUID();
+        await env.OAUTH_KV.put(`settings_state:${stateId}`, JSON.stringify({ placeholder: true }), {
+          expirationTtl: 600,
+        });
+        return Response.redirect(
+          buildGitHubAuthUrl(env.GITHUB_CLIENT_ID, stateId, callbackUrl(request)),
+          302
+        );
+      }
 
       const creds = await env.OAUTH_KV.get(`credentials:${session.username}`, "json") as { athleteId: string } | null;
 
@@ -268,24 +329,31 @@ const defaultHandler = {
         `<!DOCTYPE html><html><head>
           <meta charset="utf-8">
           <title>intervals.icu Settings</title>
+          <style>${PAGE_CSS}</style>
         </head><body>
-          <h1>Update intervals.icu credentials</h1>
-          <form method="POST" action="/settings/save">
-            <label>Athlete ID<br>
-              <input type="text" name="athleteId" value="${creds?.athleteId ?? ""}" required>
-            </label><br><br>
-            <label>API Key (leave blank to keep current)<br>
-              <input type="password" name="apiKey" placeholder="••••••••">
-            </label><br><br>
-            <button type="submit">Save</button>
-          </form>
-          ${creds ? `
-          <hr style="margin-top:2em">
-          <h2>Danger zone</h2>
-          <form method="POST" action="/settings/disconnect">
-            <button type="submit" onclick="return confirm('This will remove your intervals.icu credentials and disconnect all MCP clients (e.g. Claude Desktop). You will need to re-authorise from scratch. Continue?')"
-              style="color:red">Disconnect account</button>
-          </form>` : ""}
+          <div class="card">
+            <h1>intervals.icu Settings</h1>
+            <p class="subtitle">Signed in as <strong>${session.username}</strong></p>
+            <form method="POST" action="/settings/save">
+              <div class="field">
+                <label for="athleteId">Athlete ID</label>
+                <input type="text" id="athleteId" name="athleteId" value="${creds?.athleteId ?? ""}" required>
+              </div>
+              <div class="field">
+                <label for="apiKey">API Key <span class="hint">(leave blank to keep current)</span></label>
+                <input type="password" id="apiKey" name="apiKey" placeholder="••••••••">
+              </div>
+              <button type="submit" class="btn-primary">Save</button>
+            </form>
+            ${creds ? `
+            <div class="danger-zone">
+              <h2>Danger zone</h2>
+              <p>Removes your credentials and disconnects all MCP clients (e.g. Claude Desktop). You will need to re-authorise from scratch.</p>
+              <form method="POST" action="/settings/disconnect">
+                <button type="submit" class="btn-danger" onclick="return confirm('Disconnect all MCP clients and remove your intervals.icu credentials. Continue?')">Disconnect account</button>
+              </form>
+            </div>` : ""}
+          </div>
         </body></html>`,
         {
           headers: {
@@ -310,10 +378,18 @@ const defaultHandler = {
       const valid = await validateIntervalsCredentials(athleteId, apiKey);
       if (!valid) {
         return new Response(
-          `<!DOCTYPE html><html><body>
-            <p>Invalid credentials. <a href="/settings">Try again</a></p>
+          `<!DOCTYPE html><html><head>
+            <meta charset="utf-8">
+            <title>intervals.icu Settings</title>
+            <style>${PAGE_CSS}</style>
+          </head><body>
+            <div class="card">
+              <h1>Invalid credentials</h1>
+              <p class="error">The athlete ID or API key you entered is incorrect. Please check your <a href="https://intervals.icu/settings" target="_blank" rel="noopener">intervals.icu settings</a> and try again.</p>
+              <a href="/settings" class="btn-primary" style="display:inline-block;text-decoration:none">Try again</a>
+            </div>
           </body></html>`,
-          { status: 400, headers: { "Content-Type": "text/html; charset=utf-8" } }
+          { status: 400, headers: { "Content-Type": "text/html; charset=utf-8", "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'" } }
         );
       }
 
@@ -324,23 +400,34 @@ const defaultHandler = {
       );
 
       return new Response(
-        `<!DOCTYPE html><html><body>
-          <p>Credentials updated successfully.</p>
+        `<!DOCTYPE html><html><head>
+          <meta charset="utf-8">
+          <title>intervals.icu Settings</title>
+          <style>${PAGE_CSS}</style>
+        </head><body>
+          <div class="card">
+            <h1>Credentials updated</h1>
+            <p>Your intervals.icu credentials have been saved successfully.</p>
+            <a href="/settings" class="btn-primary" style="display:inline-block;text-decoration:none">Back to settings</a>
+          </div>
         </body></html>`,
-        { headers: { "Content-Type": "text/html; charset=utf-8" } }
+        { headers: { "Content-Type": "text/html; charset=utf-8", "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'" } }
       );
     }
 
     if (url.pathname === "/settings/disconnected") {
       return new Response(
         `<!DOCTYPE html><html><head>
-      <meta charset="utf-8">
-      <title>Disconnected</title>
-    </head><body>
-      <h1>Account disconnected</h1>
-      <p>Your intervals.icu credentials have been removed and all MCP clients (e.g. Claude Desktop) have been disconnected.</p>
-      <p><a href="/settings">Set up again</a></p>
-    </body></html>`,
+          <meta charset="utf-8">
+          <title>Disconnected — intervals.icu</title>
+          <style>${PAGE_CSS}</style>
+        </head><body>
+          <div class="card">
+            <h1>Account disconnected</h1>
+            <p>Your intervals.icu credentials have been removed and all MCP clients (e.g. Claude Desktop) have been disconnected.</p>
+            <a href="/settings" class="btn-primary" style="display:inline-block;text-decoration:none">Connect again</a>
+          </div>
+        </body></html>`,
         {
           headers: {
             "Content-Type": "text/html; charset=utf-8",

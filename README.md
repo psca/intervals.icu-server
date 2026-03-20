@@ -144,7 +144,7 @@ On first connection, your MCP client will open a browser window for GitHub login
 
 ### Updating credentials
 
-Visit `https://intervals-mcp.<your-subdomain>.workers.dev/settings` to update your intervals.icu athlete ID or API key at any time.
+Visit `https://intervals-mcp.<your-subdomain>.workers.dev/settings` to update your intervals.icu athlete ID or API key, or to disconnect your account entirely.
 
 ---
 
