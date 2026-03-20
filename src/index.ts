@@ -279,11 +279,18 @@ const defaultHandler = {
             </label><br><br>
             <button type="submit">Save</button>
           </form>
+          ${creds ? `
+          <hr style="margin-top:2em">
+          <h2>Danger zone</h2>
+          <form method="POST" action="/settings/disconnect">
+            <button type="submit" onclick="return confirm('This will remove your intervals.icu credentials and disconnect all MCP clients (e.g. Claude Desktop). You will need to re-authorise from scratch. Continue?')"
+              style="color:red">Disconnect account</button>
+          </form>` : ""}
         </body></html>`,
         {
           headers: {
             "Content-Type": "text/html; charset=utf-8",
-            "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'",
+            "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'",
           },
         }
       );

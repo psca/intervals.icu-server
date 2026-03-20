@@ -348,6 +348,37 @@ describe("defaultHandler /settings", () => {
       expect.stringContaining("i999")
     );
   });
+
+  it("GET /settings with credentials shows disconnect form", async () => {
+    const env = makeEnv();
+    env.OAUTH_KV.get
+      .mockResolvedValueOnce({ username: "testuser" })
+      .mockResolvedValueOnce({ athleteId: "i123", encryptedApiKey: "enc", iv: "iv" });
+
+    const req = new Request("https://mcp.example.com/settings", {
+      headers: { Cookie: "settings_session=mytoken" },
+    });
+    const res = await defaultHandler.fetch(req, env);
+    const body = await res.text();
+
+    expect(body).toContain("/settings/disconnect");
+    expect(body).toContain("Disconnect account");
+  });
+
+  it("GET /settings without credentials does not show disconnect form", async () => {
+    const env = makeEnv();
+    env.OAUTH_KV.get
+      .mockResolvedValueOnce({ username: "testuser" })
+      .mockResolvedValueOnce(null); // no credentials
+
+    const req = new Request("https://mcp.example.com/settings", {
+      headers: { Cookie: "settings_session=mytoken" },
+    });
+    const res = await defaultHandler.fetch(req, env);
+    const body = await res.text();
+
+    expect(body).not.toContain("/settings/disconnect");
+  });
 });
 
 describe("apiHandler", () => {
