@@ -381,6 +381,29 @@ describe("defaultHandler /settings", () => {
   });
 });
 
+describe("defaultHandler /settings/disconnect", () => {
+  it("POST with no session cookie returns 401", async () => {
+    const env = makeEnv();
+    const req = new Request("https://mcp.example.com/settings/disconnect", {
+      method: "POST",
+    });
+    const res = await defaultHandler.fetch(req, env);
+    expect(res.status).toBe(401);
+  });
+
+  it("POST with expired session returns 401", async () => {
+    const env = makeEnv();
+    env.OAUTH_KV.get.mockResolvedValueOnce(null); // session not found in KV
+
+    const req = new Request("https://mcp.example.com/settings/disconnect", {
+      method: "POST",
+      headers: { Cookie: "settings_session=expired" },
+    });
+    const res = await defaultHandler.fetch(req, env);
+    expect(res.status).toBe(401);
+  });
+});
+
 describe("apiHandler", () => {
   afterEach(() => vi.unstubAllGlobals());
 

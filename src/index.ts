@@ -331,6 +331,17 @@ const defaultHandler = {
       );
     }
 
+    if (url.pathname === "/settings/disconnect" && request.method === "POST") {
+      const sessionToken = getSessionToken(request);
+      if (!sessionToken) return new Response("Unauthorized", { status: 401 });
+
+      const session = await env.OAUTH_KV.get(`settings_session:${sessionToken}`, "json") as { username: string } | null;
+      if (!session) return new Response("Session expired", { status: 401 });
+
+      // Implementation continues in Task 4
+      return new Response("ok");
+    }
+
     return new Response("intervals-mcp worker", { status: 200 });
   },
 };
