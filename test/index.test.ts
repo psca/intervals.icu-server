@@ -17,6 +17,8 @@ function makeEnv(overrides: Partial<any> = {}): any {
       parseAuthRequest: vi.fn(),
       completeAuthorization: vi.fn(),
       lookupClient: vi.fn(),
+      listUserGrants: vi.fn().mockResolvedValue({ items: [], cursor: undefined }),
+      revokeGrant: vi.fn().mockResolvedValue(undefined),
     },
     ...overrides,
   };
