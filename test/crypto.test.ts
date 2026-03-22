@@ -41,4 +41,36 @@ describe("encryptApiKey / decryptApiKey", () => {
     expect(r1.iv).not.toBe(r2.iv);
     expect(r1.encryptedApiKey).not.toBe(r2.encryptedApiKey);
   });
+
+  it("throws on tampered ciphertext", async () => {
+    const { encryptedApiKey, iv } = await encryptApiKey("my-api-key", "alice", MASTER_KEY);
+    const tampered = encryptedApiKey.slice(0, -2) + "XX";
+    await expect(decryptApiKey(tampered, iv, "alice", MASTER_KEY)).rejects.toThrow();
+  });
+
+  it("throws on tampered IV", async () => {
+    const { encryptedApiKey, iv } = await encryptApiKey("my-api-key", "alice", MASTER_KEY);
+    // Flip first two chars to produce different IV bytes
+    const tampered = "AA" + iv.slice(2);
+    await expect(decryptApiKey(encryptedApiKey, tampered, "alice", MASTER_KEY)).rejects.toThrow();
+  });
+
+  it("round-trips an empty API key", async () => {
+    const { encryptedApiKey, iv } = await encryptApiKey("", "alice", MASTER_KEY);
+    const decrypted = await decryptApiKey(encryptedApiKey, iv, "alice", MASTER_KEY);
+    expect(decrypted).toBe("");
+  });
+
+  it("round-trips with special characters in username", async () => {
+    const username = "user@domain.com/special+chars";
+    const { encryptedApiKey, iv } = await encryptApiKey("my-key", username, MASTER_KEY);
+    const decrypted = await decryptApiKey(encryptedApiKey, iv, username, MASTER_KEY);
+    expect(decrypted).toBe("my-key");
+  });
+
+  it("round-trips with unicode API key", async () => {
+    const { encryptedApiKey, iv } = await encryptApiKey("key-with-emoji-🔑", "alice", MASTER_KEY);
+    const decrypted = await decryptApiKey(encryptedApiKey, iv, "alice", MASTER_KEY);
+    expect(decrypted).toBe("key-with-emoji-🔑");
+  });
 });
