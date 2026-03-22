@@ -39,7 +39,11 @@ vitest.config.ts      -- cloudflare:workers module stub config (at project root,
 test/                 -- Unit tests (vitest)
   index.test.ts       -- defaultHandler + apiHandler integration tests
   auth.test.ts        -- GitHub OAuth helper unit tests
+  client.test.ts      -- IntervalsClient unit tests
+  crypto.test.ts      -- HKDF+AES-GCM encryption unit tests
+  formatting.test.ts  -- Response formatting unit tests
   stdio.test.ts       -- 4 tests: tool count, tool names, missing credential errors
+  weather.test.ts     -- Weather pipeline unit tests
   __mocks__/cloudflare-workers.ts -- WorkerEntrypoint stub for vitest
 ```
 
@@ -66,8 +70,10 @@ test/                 -- Unit tests (vitest)
 
 ```bash
 npm test           # run all tests (vitest)
+npm run test:watch # run tests in watch mode
 npm run dev        # local dev server (wrangler dev)
 npm run deploy     # deploy to Cloudflare (wrangler deploy)
+npm run stdio      # run stdio MCP server locally (requires INTERVALS_API_KEY + INTERVALS_ATHLETE_ID env vars)
 ```
 
 ## Secrets
