@@ -372,11 +372,10 @@ const defaultHandler = {
       if (!session) return new Response("Session expired", { status: 401 });
 
       const body = await request.formData();
-      const athleteId = body.get("athleteId") as string;
-      const apiKey = body.get("apiKey") as string;
+      const athleteId = ((body.get("athleteId") as string | null) ?? "").trim();
+      const apiKey = ((body.get("apiKey") as string | null) ?? "").trim();
 
-      const valid = await validateIntervalsCredentials(athleteId, apiKey);
-      if (!valid) {
+      if (!athleteId) {
         return new Response(
           `<!DOCTYPE html><html><head>
             <meta charset="utf-8">
@@ -384,8 +383,8 @@ const defaultHandler = {
             <style>${PAGE_CSS}</style>
           </head><body>
             <div class="card">
-              <h1>Invalid credentials</h1>
-              <p class="error">The athlete ID or API key you entered is incorrect. Please check your <a href="https://intervals.icu/settings" target="_blank" rel="noopener">intervals.icu settings</a> and try again.</p>
+              <h1>Missing athlete ID</h1>
+              <p class="error">Athlete ID is required.</p>
               <a href="/settings" class="btn-primary" style="display:inline-block;text-decoration:none">Try again</a>
             </div>
           </body></html>`,
@@ -393,10 +392,77 @@ const defaultHandler = {
         );
       }
 
-      const { encryptedApiKey, iv } = await encryptApiKey(apiKey, session.username, env.CREDENTIALS_MASTER_KEY);
+      let encResult: { encryptedApiKey: string; iv: string };
+
+      if (apiKey) {
+        // New API key provided — validate and encrypt
+        const valid = await validateIntervalsCredentials(athleteId, apiKey);
+        if (!valid) {
+          return new Response(
+            `<!DOCTYPE html><html><head>
+              <meta charset="utf-8">
+              <title>intervals.icu Settings</title>
+              <style>${PAGE_CSS}</style>
+            </head><body>
+              <div class="card">
+                <h1>Invalid credentials</h1>
+                <p class="error">The athlete ID or API key you entered is incorrect. Please check your <a href="https://intervals.icu/settings" target="_blank" rel="noopener">intervals.icu settings</a> and try again.</p>
+                <a href="/settings" class="btn-primary" style="display:inline-block;text-decoration:none">Try again</a>
+              </div>
+            </body></html>`,
+            { status: 400, headers: { "Content-Type": "text/html; charset=utf-8", "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'" } }
+          );
+        }
+        encResult = await encryptApiKey(apiKey, session.username, env.CREDENTIALS_MASTER_KEY);
+      } else {
+        // No API key — keep existing encrypted key
+        const existingCreds = await env.OAUTH_KV.get(`credentials:${session.username}`, "json") as {
+          athleteId: string; encryptedApiKey: string; iv: string;
+        } | null;
+        if (!existingCreds) {
+          return new Response(
+            `<!DOCTYPE html><html><head>
+              <meta charset="utf-8">
+              <title>intervals.icu Settings</title>
+              <style>${PAGE_CSS}</style>
+            </head><body>
+              <div class="card">
+                <h1>API key required</h1>
+                <p class="error">No existing credentials found. Please provide an API key.</p>
+                <a href="/settings" class="btn-primary" style="display:inline-block;text-decoration:none">Try again</a>
+              </div>
+            </body></html>`,
+            { status: 400, headers: { "Content-Type": "text/html; charset=utf-8", "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'" } }
+          );
+        }
+        // Validate existing key works with the (possibly new) athlete ID
+        const existingApiKey = await decryptApiKey(
+          existingCreds.encryptedApiKey, existingCreds.iv,
+          session.username, env.CREDENTIALS_MASTER_KEY
+        );
+        const valid = await validateIntervalsCredentials(athleteId, existingApiKey);
+        if (!valid) {
+          return new Response(
+            `<!DOCTYPE html><html><head>
+              <meta charset="utf-8">
+              <title>intervals.icu Settings</title>
+              <style>${PAGE_CSS}</style>
+            </head><body>
+              <div class="card">
+                <h1>Invalid credentials</h1>
+                <p class="error">Your existing API key does not work with the provided athlete ID. Please provide a new API key.</p>
+                <a href="/settings" class="btn-primary" style="display:inline-block;text-decoration:none">Try again</a>
+              </div>
+            </body></html>`,
+            { status: 400, headers: { "Content-Type": "text/html; charset=utf-8", "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'" } }
+          );
+        }
+        encResult = { encryptedApiKey: existingCreds.encryptedApiKey, iv: existingCreds.iv };
+      }
+
       await env.OAUTH_KV.put(
         `credentials:${session.username}`,
-        JSON.stringify({ athleteId, encryptedApiKey, iv })
+        JSON.stringify({ athleteId, encryptedApiKey: encResult.encryptedApiKey, iv: encResult.iv })
       );
 
       return new Response(

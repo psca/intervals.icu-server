@@ -159,7 +159,7 @@ export function registerActivityTools(server: McpServer, client: IntervalsClient
 
         const timeStream = streams.find(s => s.type === "time");
         const timeData = (timeStream?.data as number[]) ?? [];
-        const total = Math.max(...streams.map(s => ((s.data as unknown[]) ?? []).length));
+        const total = Math.max(0, ...streams.map(s => ((s.data as unknown[]) ?? []).length));
         const sampleIndices = computeSampleIndices(timeData, total, interval_seconds);
 
         const output: Record<string, unknown> = {};
