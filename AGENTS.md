@@ -60,7 +60,7 @@ test/                 -- Unit tests (vitest)
 - **Per-user credentials:** `apiHandler` reads `credentials:<username>` from KV using `ctx.props.username`, decrypts the API key with HKDF-derived per-user key, then creates `IntervalsClient`. Returns 401 with `/settings` link if credentials not found.
 - **Credential collection flow:** First-time OAuth redirects to `/configure` (form) after GitHub auth. Returning users with stored credentials complete authorization directly. `/settings` provides a separate GitHub OAuth mini-loop to update credentials without re-authorizing MCP clients.
 - **Settings session expiry:** If the `settings_session` cookie exists but the KV entry has expired (1hr TTL), `GET /settings` restarts GitHub OAuth rather than returning a 401 — this is intentional so users never hit a dead end.
-- **Shared page CSS:** All HTML responses use a `PAGE_CSS` constant defined just above `defaultHandler` in `src/index.ts`. Edit it there to restyle all pages at once.
+- **Shared page CSS:** All HTML responses use a `PAGE_CSS` constant exported from `src/styles.ts`. Edit it there to restyle all pages at once.
 - **Error handling:** Every tool wraps logic in try/catch and returns error text to the MCP client (never crashes the Worker).
 - **Sampling logic:** `computeSampleIndices()` in `activities.ts` handles time-based downsampling for GPS streams. Auto-injects `time` stream type when not requested.
 - **Weather pipeline:** `get_activity_weather` does everything server-side: fetches GPS streams, calls Open-Meteo (forecast or archive based on age), computes per-waypoint headwind/tailwind using circular bearing math.
