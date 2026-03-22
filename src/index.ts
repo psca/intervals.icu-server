@@ -22,6 +22,16 @@ export interface Env {
   OAUTH_PROVIDER: OAuthHelpers; // injected by OAuthProvider library
 }
 
+interface StoredCredentials {
+  athleteId: string;
+  encryptedApiKey: string;
+  iv: string;
+}
+
+interface SettingsSession {
+  username: string;
+}
+
 const STATE_TTL = 60 * 10; // 10 minutes
 
 const PAGE_CSS = `
@@ -310,7 +320,7 @@ const defaultHandler = {
         );
       }
 
-      const session = await env.OAUTH_KV.get(`settings_session:${sessionToken}`, "json") as { username: string } | null;
+      const session = await env.OAUTH_KV.get(`settings_session:${sessionToken}`, "json") as SettingsSession | null;
       if (!session) {
         // Session expired in KV — restart GitHub OAuth (clears stale cookie on success)
         const stateId = crypto.randomUUID();
@@ -323,7 +333,7 @@ const defaultHandler = {
         );
       }
 
-      const creds = await env.OAUTH_KV.get(`credentials:${session.username}`, "json") as { athleteId: string } | null;
+      const creds = await env.OAUTH_KV.get(`credentials:${session.username}`, "json") as StoredCredentials | null;
 
       return new Response(
         `<!DOCTYPE html><html><head>
@@ -368,7 +378,7 @@ const defaultHandler = {
       const sessionToken = getSessionToken(request);
       if (!sessionToken) return new Response("Unauthorized", { status: 401 });
 
-      const session = await env.OAUTH_KV.get(`settings_session:${sessionToken}`, "json") as { username: string } | null;
+      const session = await env.OAUTH_KV.get(`settings_session:${sessionToken}`, "json") as SettingsSession | null;
       if (!session) return new Response("Session expired", { status: 401 });
 
       const body = await request.formData();
@@ -507,7 +517,7 @@ const defaultHandler = {
       const sessionToken = getSessionToken(request);
       if (!sessionToken) return new Response("Unauthorized", { status: 401 });
 
-      const session = await env.OAUTH_KV.get(`settings_session:${sessionToken}`, "json") as { username: string } | null;
+      const session = await env.OAUTH_KV.get(`settings_session:${sessionToken}`, "json") as SettingsSession | null;
       if (!session) return new Response("Session expired", { status: 401 });
 
       const { username } = session;
@@ -556,11 +566,7 @@ const apiHandler = {
     }
 
     const props = ctx.props as { username: string };
-    const creds = await env.OAUTH_KV.get(`credentials:${props.username}`, "json") as {
-      athleteId: string;
-      encryptedApiKey: string;
-      iv: string;
-    } | null;
+    const creds = await env.OAUTH_KV.get(`credentials:${props.username}`, "json") as StoredCredentials | null;
 
     if (!creds) {
       return new Response(
