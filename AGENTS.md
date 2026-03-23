@@ -30,6 +30,8 @@ src/crypto.ts         -- HKDF+AES-GCM utilities: hexToBytes, encryptApiKey, decr
 src/client.ts         -- IntervalsClient: HTTP client with Basic auth for intervals.icu API
 src/formatting.ts     -- 5 pure functions that format API responses into human-readable text
 src/weather.ts        -- Pure weather utilities + computeActivityWeather pipeline (Open-Meteo)
+src/utils.ts          -- Shared utilities: defaultDateRange() and toolHandler() wrapper
+                         (toolHandler wraps tool logic in try/catch, returns MCP text content)
 src/tools/            -- Tool registration files (one per domain)
   activities.ts       -- 6 tools: list, details, intervals, streams, sampled streams, weather
   events.ts           -- 5 tools: list, get, create/update, delete, delete by range

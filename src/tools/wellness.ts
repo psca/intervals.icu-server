@@ -2,16 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { IntervalsClient } from "../client.js";
 import { formatWellnessEntry } from "../formatting.js";
-
-function defaultDateRange(): { start: string; end: string } {
-  const end = new Date();
-  const start = new Date();
-  start.setDate(start.getDate() - 30);
-  return {
-    start: start.toISOString().slice(0, 10),
-    end: end.toISOString().slice(0, 10),
-  };
-}
+import { defaultDateRange, toolHandler } from "../utils.js";
 
 export function registerWellnessTools(server: McpServer, client: IntervalsClient): void {
   server.tool(
@@ -25,22 +16,19 @@ export function registerWellnessTools(server: McpServer, client: IntervalsClient
       const { start, end } = defaultDateRange();
       const params = { oldest: start_date ?? start, newest: end_date ?? end };
 
-      try {
+      return toolHandler(async () => {
         const result = await client.get<unknown[]>(
           `/athlete/${client.athleteId}/wellness`,
           params
         );
         if (!result || (Array.isArray(result) && result.length === 0)) {
-          return { content: [{ type: "text" as const, text: "No wellness data found for the specified date range." }] };
+          return "No wellness data found for the specified date range.";
         }
         const entries = Array.isArray(result) ? result : Object.values(result as object);
-        const text = "Wellness Data:\n\n" + entries
+        return "Wellness Data:\n\n" + entries
           .map(e => formatWellnessEntry(e as Record<string, unknown>))
           .join("\n\n");
-        return { content: [{ type: "text" as const, text }] };
-      } catch (e) {
-        return { content: [{ type: "text" as const, text: `Error fetching wellness data: ${e}` }] };
-      }
+      }, "fetching wellness data");
     }
   );
 }

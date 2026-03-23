@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { IntervalsClient } from "../client.js";
 import { formatEventSummary, formatEventDetails } from "../formatting.js";
+import { toolHandler } from "../utils.js";
 
 export function registerEventTools(server: McpServer, client: IntervalsClient): void {
 
@@ -15,17 +16,14 @@ export function registerEventTools(server: McpServer, client: IntervalsClient): 
     async ({ start_date, end_date }) => {
       const today = new Date().toISOString().slice(0, 10);
       const future = new Date(Date.now() + 30 * 864e5).toISOString().slice(0, 10);
-      try {
+      return toolHandler(async () => {
         const events = await client.get<Record<string, unknown>[]>(
           `/athlete/${client.athleteId}/events`,
           { oldest: start_date ?? today, newest: end_date ?? future }
         );
-        if (!events?.length) return { content: [{ type: "text" as const, text: "No events found." }] };
-        const text = "Events:\n\n" + events.map(e => formatEventSummary(e)).join("\n\n");
-        return { content: [{ type: "text" as const, text }] };
-      } catch (e) {
-        return { content: [{ type: "text" as const, text: `Error fetching events: ${e}` }] };
-      }
+        if (!events?.length) return "No events found.";
+        return "Events:\n\n" + events.map(e => formatEventSummary(e)).join("\n\n");
+      }, "fetching events");
     }
   );
 
@@ -34,14 +32,12 @@ export function registerEventTools(server: McpServer, client: IntervalsClient): 
     "Get detailed information for a specific planned event",
     { event_id: z.string().describe("The Intervals.icu event ID") },
     async ({ event_id }) => {
-      try {
+      return toolHandler(async () => {
         const event = await client.get<Record<string, unknown>>(
           `/athlete/${client.athleteId}/event/${event_id}`
         );
-        return { content: [{ type: "text" as const, text: formatEventDetails(event) }] };
-      } catch (e) {
-        return { content: [{ type: "text" as const, text: `Error fetching event: ${e}` }] };
-      }
+        return formatEventDetails(event);
+      }, "fetching event");
     }
   );
 
@@ -50,12 +46,10 @@ export function registerEventTools(server: McpServer, client: IntervalsClient): 
     "Delete a single planned event. Permanent — confirm with athlete before calling.",
     { event_id: z.string().describe("The Intervals.icu event ID to delete") },
     async ({ event_id }) => {
-      try {
+      return toolHandler(async () => {
         await client.delete(`/athlete/${client.athleteId}/events/${event_id}`);
-        return { content: [{ type: "text" as const, text: `Event ${event_id} deleted.` }] };
-      } catch (e) {
-        return { content: [{ type: "text" as const, text: `Error deleting event: ${e}` }] };
-      }
+        return `Event ${event_id} deleted.`;
+      }, "deleting event");
     }
   );
 
@@ -67,13 +61,13 @@ export function registerEventTools(server: McpServer, client: IntervalsClient): 
       end_date: z.string().describe("End date YYYY-MM-DD"),
     },
     async ({ start_date, end_date }) => {
-      try {
+      return toolHandler(async () => {
         const events = await client.get<Record<string, unknown>[]>(
           `/athlete/${client.athleteId}/events`,
           { oldest: start_date, newest: end_date }
         );
         if (!events?.length) {
-          return { content: [{ type: "text" as const, text: "No events found in the specified date range." }] };
+          return "No events found in the specified date range.";
         }
 
         const TRUNCATION_BOUNDARIES = [100, 200, 500, 1000];
@@ -94,10 +88,8 @@ export function registerEventTools(server: McpServer, client: IntervalsClient): 
         let text = `Deleted ${deleted} events.`;
         if (failed.length) text += ` Failed: ${failed.length} (${failed.join(", ")})`;
         text += truncationWarning;
-        return { content: [{ type: "text" as const, text }] };
-      } catch (e) {
-        return { content: [{ type: "text" as const, text: `Error: ${e}` }] };
-      }
+        return text;
+      }, "deleting events");
     }
   );
 
@@ -131,21 +123,19 @@ export function registerEventTools(server: McpServer, client: IntervalsClient): 
         description: workout_doc ? JSON.stringify(workout_doc) : undefined,
       };
 
-      try {
+      return toolHandler(async () => {
         if (event_id) {
           const result = await client.put(
             `/athlete/${client.athleteId}/events/${event_id}`, eventData
           );
-          return { content: [{ type: "text" as const, text: `Event updated: ${JSON.stringify(result, null, 2)}` }] };
+          return `Event updated: ${JSON.stringify(result, null, 2)}`;
         } else {
           const result = await client.post(
             `/athlete/${client.athleteId}/events`, eventData
           );
-          return { content: [{ type: "text" as const, text: `Event created: ${JSON.stringify(result, null, 2)}` }] };
+          return `Event created: ${JSON.stringify(result, null, 2)}`;
         }
-      } catch (e) {
-        return { content: [{ type: "text" as const, text: `Error saving event: ${e}` }] };
-      }
+      }, "saving event");
     }
   );
 
