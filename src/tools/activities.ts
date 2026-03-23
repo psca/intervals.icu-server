@@ -6,7 +6,7 @@ import { computeActivityWeather } from "../weather.js";
 import { defaultDateRange, toolHandler } from "../utils.js";
 
 /** Compute sample indices for time-based downsampling. Falls back to stride-based if no time data. */
-function computeSampleIndices(timeData: number[], totalPoints: number, intervalSeconds: number): number[] {
+export function computeSampleIndices(timeData: number[], totalPoints: number, intervalSeconds: number): number[] {
   if (timeData.length) {
     const indices = timeData
       .map((t, i) => ({ t, i }))
