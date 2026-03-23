@@ -72,6 +72,15 @@ export function registerEventTools(server: McpServer, client: IntervalsClient): 
           `/athlete/${client.athleteId}/events`,
           { oldest: start_date, newest: end_date }
         );
+        if (!events?.length) {
+          return { content: [{ type: "text" as const, text: "No events found in the specified date range." }] };
+        }
+
+        const TRUNCATION_BOUNDARIES = [100, 200, 500, 1000];
+        const truncationWarning = TRUNCATION_BOUNDARIES.includes(events.length)
+          ? ` Warning: exactly ${events.length} events returned — the API may have truncated results. Consider using a narrower date range.`
+          : "";
+
         let deleted = 0;
         const failed: unknown[] = [];
         await Promise.all(events.map(async e => {
@@ -82,7 +91,10 @@ export function registerEventTools(server: McpServer, client: IntervalsClient): 
             failed.push(e.id);
           }
         }));
-        return { content: [{ type: "text" as const, text: `Deleted ${deleted} events. Failed: ${failed.length} (${failed.join(", ")})` }] };
+        let text = `Deleted ${deleted} events.`;
+        if (failed.length) text += ` Failed: ${failed.length} (${failed.join(", ")})`;
+        text += truncationWarning;
+        return { content: [{ type: "text" as const, text }] };
       } catch (e) {
         return { content: [{ type: "text" as const, text: `Error: ${e}` }] };
       }

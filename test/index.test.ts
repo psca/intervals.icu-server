@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { defaultHandler, apiHandler } from "../src/index";
+import { encryptApiKey } from "../src/crypto";
 
 // Minimal mock for env.OAUTH_PROVIDER
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -347,6 +348,74 @@ describe("defaultHandler /settings", () => {
       "credentials:testuser",
       expect.stringContaining("i999")
     );
+  });
+
+  it("POST /settings/save with blank athleteId returns 400", async () => {
+    const env = makeEnv({ CREDENTIALS_MASTER_KEY: "a".repeat(64) });
+    env.OAUTH_KV.get.mockResolvedValue({ username: "testuser" });
+
+    const req = new Request("https://mcp.example.com/settings/save", {
+      method: "POST",
+      body: new URLSearchParams({ athleteId: "", apiKey: "somekey" }),
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        Cookie: "settings_session=mytoken",
+      },
+    });
+    const res = await defaultHandler.fetch(req, env);
+    expect(res.status).toBe(400);
+    const body = await res.text();
+    expect(body).toContain("Missing athlete ID");
+  });
+
+  it("POST /settings/save with blank apiKey keeps existing credentials", async () => {
+    const masterKey = "a".repeat(64);
+    const env = makeEnv({ CREDENTIALS_MASTER_KEY: masterKey });
+    // Encrypt a real key so decryptApiKey succeeds
+    const encrypted = await encryptApiKey("existingkey", "testuser", masterKey);
+    // First get: session lookup; Second get: existing credentials
+    env.OAUTH_KV.get
+      .mockResolvedValueOnce({ username: "testuser" })
+      .mockResolvedValueOnce({ athleteId: "i123", encryptedApiKey: encrypted.encryptedApiKey, iv: encrypted.iv });
+    // validateIntervalsCredentials will call fetch
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true }));
+
+    const req = new Request("https://mcp.example.com/settings/save", {
+      method: "POST",
+      body: new URLSearchParams({ athleteId: "i123", apiKey: "" }),
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        Cookie: "settings_session=mytoken",
+      },
+    });
+    const res = await defaultHandler.fetch(req, env);
+    expect(res.status).toBe(200);
+    // Should store the existing encrypted key, not re-encrypt
+    expect(env.OAUTH_KV.put).toHaveBeenCalledWith(
+      "credentials:testuser",
+      expect.stringContaining(encrypted.encryptedApiKey)
+    );
+  });
+
+  it("POST /settings/save with blank apiKey and no existing creds returns 400", async () => {
+    const env = makeEnv({ CREDENTIALS_MASTER_KEY: "a".repeat(64) });
+    // First get: session lookup; Second get: no existing credentials
+    env.OAUTH_KV.get
+      .mockResolvedValueOnce({ username: "testuser" })
+      .mockResolvedValueOnce(null);
+
+    const req = new Request("https://mcp.example.com/settings/save", {
+      method: "POST",
+      body: new URLSearchParams({ athleteId: "i123", apiKey: "" }),
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        Cookie: "settings_session=mytoken",
+      },
+    });
+    const res = await defaultHandler.fetch(req, env);
+    expect(res.status).toBe(400);
+    const body = await res.text();
+    expect(body).toContain("API key required");
   });
 
   it("GET /settings with credentials shows disconnect form", async () => {
