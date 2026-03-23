@@ -42,7 +42,7 @@ describe("delete_events_by_date_range", () => {
     const server = await createStdioServer("test-key", "i123");
     const result = await callTool(server, "delete_events_by_date_range", { start_date: "2025-01-01", end_date: "2025-01-31" });
 
-    expect(result.content[0].text).toContain("Deleted 0");
+    expect(result.content[0].text).toContain("No events found");
   });
 
   it("reports partial failure correctly", async () => {
