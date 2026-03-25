@@ -5,12 +5,14 @@ import { formatWellnessEntry } from "../formatting.js";
 import { defaultDateRange, toolHandler } from "../utils.js";
 
 export function registerWellnessTools(server: McpServer, client: IntervalsClient): void {
-  server.tool(
+  server.registerTool(
     "get_wellness_data",
-    "Get wellness data (HRV, resting HR, CTL, ATL, TSB, weight, sleep) for the athlete",
     {
-      start_date: z.string().optional().describe("Start date YYYY-MM-DD (default: 30 days ago)"),
-      end_date: z.string().optional().describe("End date YYYY-MM-DD (default: today)"),
+      description: "Get wellness data (HRV, resting HR, CTL, ATL, TSB, weight, sleep) for the athlete",
+      inputSchema: {
+        start_date: z.string().optional().describe("Start date YYYY-MM-DD (default: 30 days ago)"),
+        end_date: z.string().optional().describe("End date YYYY-MM-DD (default: today)"),
+      },
     },
     async ({ start_date, end_date }) => {
       const { start, end } = defaultDateRange();

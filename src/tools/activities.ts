@@ -20,14 +20,16 @@ export function computeSampleIndices(timeData: number[], totalPoints: number, in
 
 export function registerActivityTools(server: McpServer, client: IntervalsClient): void {
 
-  server.tool(
+  server.registerTool(
     "get_activities",
-    "Get a list of activities for the athlete from Intervals.icu",
     {
-      start_date: z.string().optional().describe("Start date YYYY-MM-DD (default: 30 days ago)"),
-      end_date: z.string().optional().describe("End date YYYY-MM-DD (default: today)"),
-      limit: z.number().int().optional().default(10).describe("Max activities to return"),
-      include_unnamed: z.boolean().optional().default(false).describe("Include unnamed activities"),
+      description: "Get a list of activities for the athlete from Intervals.icu",
+      inputSchema: {
+        start_date: z.string().optional().describe("Start date YYYY-MM-DD (default: 30 days ago)"),
+        end_date: z.string().optional().describe("End date YYYY-MM-DD (default: today)"),
+        limit: z.number().int().optional().default(10).describe("Max activities to return"),
+        include_unnamed: z.boolean().optional().default(false).describe("Include unnamed activities"),
+      },
     },
     async ({ start_date, end_date, limit, include_unnamed }) => {
       const { start, end } = defaultDateRange();
@@ -48,10 +50,14 @@ export function registerActivityTools(server: McpServer, client: IntervalsClient
     }
   );
 
-  server.tool(
+  server.registerTool(
     "get_activity_details",
-    "Get detailed information for a specific activity",
-    { activity_id: z.string().describe("The Intervals.icu activity ID") },
+    {
+      description: "Get detailed information for a specific activity",
+      inputSchema: {
+        activity_id: z.string().describe("The Intervals.icu activity ID"),
+      },
+    },
     async ({ activity_id }) => {
       return toolHandler(async () => {
         const result = await client.get<Record<string, unknown>>(`/activity/${activity_id}`);
@@ -61,10 +67,14 @@ export function registerActivityTools(server: McpServer, client: IntervalsClient
     }
   );
 
-  server.tool(
+  server.registerTool(
     "get_activity_intervals",
-    "Get interval data for a specific activity",
-    { activity_id: z.string().describe("The Intervals.icu activity ID") },
+    {
+      description: "Get interval data for a specific activity",
+      inputSchema: {
+        activity_id: z.string().describe("The Intervals.icu activity ID"),
+      },
+    },
     async ({ activity_id }) => {
       return toolHandler(async () => {
         const result = await client.get<Record<string, unknown>>(`/activity/${activity_id}/intervals`);
@@ -76,15 +86,17 @@ export function registerActivityTools(server: McpServer, client: IntervalsClient
     }
   );
 
-  server.tool(
+  server.registerTool(
     "get_activity_streams",
-    "Get time-series stream data for a specific activity. High token cost — use only for decoupling or VI analysis.",
     {
-      activity_id: z.string().describe("The Intervals.icu activity ID"),
-      stream_types: z.string().optional().describe(
-        "Comma-separated stream types (default: time,watts,heartrate,cadence,altitude,distance,velocity_smooth). " +
-        "Available: latlng, bearing, temp, grade_smooth, w_bal, and many more — see intervals.icu docs."
-      ),
+      description: "Get time-series stream data for a specific activity. High token cost — use only for decoupling or VI analysis.",
+      inputSchema: {
+        activity_id: z.string().describe("The Intervals.icu activity ID"),
+        stream_types: z.string().optional().describe(
+          "Comma-separated stream types (default: time,watts,heartrate,cadence,altitude,distance,velocity_smooth). " +
+          "Available: latlng, bearing, temp, grade_smooth, w_bal, and many more — see intervals.icu docs."
+        ),
+      },
     },
     async ({ activity_id, stream_types }) => {
       const types = stream_types ?? "time,watts,heartrate,cadence,altitude,distance,velocity_smooth";
@@ -121,13 +133,15 @@ export function registerActivityTools(server: McpServer, client: IntervalsClient
     }
   );
 
-  server.tool(
+  server.registerTool(
     "get_activity_route",
-    "Get GPS/route data for an activity, sampled at regular intervals. Use for route analysis, elevation profiles, or waypoint inspection without full stream token cost.",
     {
-      activity_id: z.string().describe("The Intervals.icu activity ID"),
-      stream_types: z.string().describe("Comma-separated stream types, e.g. 'latlng,bearing'"),
-      interval_seconds: z.number().int().optional().default(1800).describe("Sample one point every N seconds (default: 1800 = 30 min)"),
+      description: "Get GPS/route data for an activity, sampled at regular intervals. Use for route analysis, elevation profiles, or waypoint inspection without full stream token cost.",
+      inputSchema: {
+        activity_id: z.string().describe("The Intervals.icu activity ID"),
+        stream_types: z.string().describe("Comma-separated stream types, e.g. 'latlng,bearing'"),
+        interval_seconds: z.number().int().optional().default(1800).describe("Sample one point every N seconds (default: 1800 = 30 min)"),
+      },
     },
     async ({ activity_id, stream_types, interval_seconds }) => {
       return toolHandler(async () => {
@@ -170,11 +184,16 @@ export function registerActivityTools(server: McpServer, client: IntervalsClient
     }
   );
 
-  server.tool(
+  server.registerTool(
     "get_activity_weather",
-    "Get weather conditions for an outdoor activity. Fetches GPS streams + Open-Meteo data server-side. " +
-    "Returns description, feels-like temp, wind speed/direction, headwind/tailwind %, precipitation flags, and ASCII temp bar.",
-    { activity_id: z.string().describe("The Intervals.icu activity ID") },
+    {
+      description:
+        "Get weather conditions for an outdoor activity. Fetches GPS streams + Open-Meteo data server-side. " +
+        "Returns description, feels-like temp, wind speed/direction, headwind/tailwind %, precipitation flags, and ASCII temp bar.",
+      inputSchema: {
+        activity_id: z.string().describe("The Intervals.icu activity ID"),
+      },
+    },
     async ({ activity_id }) => {
       return toolHandler(async () => {
         const activity = await client.get<Record<string, unknown>>(`/activity/${activity_id}`);
