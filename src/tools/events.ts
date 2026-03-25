@@ -95,7 +95,7 @@ export function registerEventTools(server: McpServer, client: IntervalsClient): 
 
   server.tool(
     "add_or_update_event",
-    "Create or update a planned workout event. See workout_doc for structured interval definitions.",
+    "Create or update a planned workout event. Use description for plain text notes; use workout_doc for structured interval steps.",
     {
       name: z.string().describe("Event name (e.g. 'Easy Run', 'Threshold Ride')"),
       workout_type: z.enum(["Ride", "Run", "Swim", "Walk", "Row"]).describe("Sport type"),
@@ -103,6 +103,7 @@ export function registerEventTools(server: McpServer, client: IntervalsClient): 
       event_id: z.string().optional().describe("Provide to update an existing event"),
       moving_time: z.number().int().optional().describe("Expected duration in seconds"),
       distance: z.number().int().optional().describe("Expected distance in metres"),
+      description: z.string().optional().describe("Plain text description/notes for the event"),
       workout_doc: z.object({
         description: z.string().optional(),
         steps: z.array(z.record(z.string(), z.unknown())).optional(),
@@ -111,7 +112,7 @@ export function registerEventTools(server: McpServer, client: IntervalsClient): 
         "power/hr/pace/cadence with value+units, reps with nested steps array, warmup/cooldown booleans, text label."
       ),
     },
-    async ({ name, workout_type, start_date, event_id, moving_time, distance, workout_doc }) => {
+    async ({ name, workout_type, start_date, event_id, moving_time, distance, description, workout_doc }) => {
       const date = start_date ?? new Date().toISOString().slice(0, 10);
       const eventData: Record<string, unknown> = {
         start_date_local: `${date}T00:00:00`,
@@ -120,7 +121,8 @@ export function registerEventTools(server: McpServer, client: IntervalsClient): 
         type: workout_type,
         moving_time,
         distance,
-        description: workout_doc ? JSON.stringify(workout_doc) : undefined,
+        description,
+        workout_doc,
       };
 
       return toolHandler(async () => {
