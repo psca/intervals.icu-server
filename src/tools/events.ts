@@ -95,7 +95,7 @@ export function registerEventTools(server: McpServer, client: IntervalsClient): 
 
   server.tool(
     "add_or_update_event",
-    "Create or update a planned workout event. Use description for plain text notes; use workout_doc for structured interval steps.",
+    "Create or update a planned workout event. Use description for workout steps — the server parses it into structured steps and computes training load. workout_doc is a server-generated field returned on reads; avoid sending it on writes.",
     {
       name: z.string().describe("Event name (e.g. 'Easy Run', 'Threshold Ride')"),
       workout_type: z.enum(["Ride", "Run", "Swim", "Walk", "Row"]).describe("Sport type"),
@@ -103,13 +103,18 @@ export function registerEventTools(server: McpServer, client: IntervalsClient): 
       event_id: z.string().optional().describe("Provide to update an existing event"),
       moving_time: z.number().int().optional().describe("Expected duration in seconds"),
       distance: z.number().int().optional().describe("Expected distance in metres"),
-      description: z.string().optional().describe("Plain text description/notes for the event"),
+      description: z.string().optional().describe(
+        "Workout steps in intervals.icu text syntax — the server parses this into structured steps and computes training load (TSS, duration, intensity). " +
+        "Use '- ' prefix for steps, plain lines for section headers. " +
+        "Examples: '- 10km 89% LTHR', '- 30m Z2 HR', '- 8x\\n- 400m 5:00/km Pace\\n- 200m easy'. " +
+        "Always use this field for defining workout content — do not use workout_doc on writes."
+      ),
       workout_doc: z.object({
         description: z.string().optional(),
         steps: z.array(z.record(z.string(), z.unknown())).optional(),
       }).optional().describe(
-        "Structured workout steps. Each step can have: duration (secs), distance (m), " +
-        "power/hr/pace/cadence with value+units, reps with nested steps array, warmup/cooldown booleans, text label."
+        "Server-generated workout structure returned on reads. Sending this on writes is not recommended — " +
+        "the step format is undocumented and the server does not compute training load from raw steps. Use description instead."
       ),
     },
     async ({ name, workout_type, start_date, event_id, moving_time, distance, description, workout_doc }) => {
