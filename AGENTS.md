@@ -2,7 +2,7 @@
 
 ## Project overview
 
-TypeScript Cloudflare Worker implementing an MCP server for intervals.icu training data. Provides 12 tools for activities, wellness, events, and weather analysis. Access is controlled via GitHub OAuth — any GitHub user can authenticate. Each user provides their own intervals.icu athlete ID and API key, collected during first-time OAuth via a `/configure` form and stored AES-256-GCM encrypted in OAUTH_KV. Credentials are manageable via the `/settings` page.
+TypeScript Cloudflare Worker implementing an MCP server for intervals.icu training data. Provides 18 tools for activities, athlete profiles and curves, wellness, events, and weather analysis. Access is controlled via GitHub OAuth — any GitHub user can authenticate. Each user provides their own intervals.icu athlete ID and API key, collected during first-time OAuth via a `/configure` form and stored AES-256-GCM encrypted in OAUTH_KV. Credentials are manageable via the `/settings` page.
 
 ## Tech stack
 
@@ -34,6 +34,7 @@ src/utils.ts          -- Shared utilities: defaultDateRange() and toolHandler() 
                          (toolHandler wraps tool logic in try/catch, returns MCP text content)
 src/tools/            -- Tool registration files (one per domain)
   activities.ts       -- 6 tools: list, details, intervals, streams, sampled streams, weather
+  athlete.ts          -- 6 tools: profile, search, power/pace/HR curves, gear
   events.ts           -- 5 tools: list, get, create/update, delete, delete by range
   wellness.ts         -- 1 tool: wellness data (HRV, CTL/ATL/TSB, sleep)
 tsconfig.stdio.json   -- Node.js tsconfig ("types": ["node"]), excludes CF types; used by npm run stdio
@@ -43,6 +44,7 @@ test/                 -- Unit tests (vitest)
   auth.test.ts        -- GitHub OAuth helper unit tests
   client.test.ts      -- IntervalsClient unit tests
   crypto.test.ts      -- HKDF+AES-GCM encryption unit tests
+  athlete.test.ts     -- Athlete tool formatter + endpoint contract unit tests
   formatting.test.ts  -- Response formatting unit tests
   stdio.test.ts       -- 4 tests: tool count, tool names, missing credential errors
   weather.test.ts     -- Weather pipeline unit tests
@@ -65,7 +67,8 @@ test/                 -- Unit tests (vitest)
 - **Sampling logic:** `computeSampleIndices()` in `activities.ts` handles time-based downsampling for GPS streams. Auto-injects `time` stream type when not requested.
 - **Weather pipeline:** `get_activity_weather` does everything server-side: fetches GPS streams, calls Open-Meteo (forecast or archive based on age), computes per-waypoint headwind/tailwind using circular bearing math.
 - **Circular math:** Wind direction averaging uses trigonometric circular mean (atan2 of sin/cos sums). Headwind detection uses `(... + 360) % 360` to handle JS negative modulo.
-- **stdio entry point:** `src/stdio.ts` exports `createStdioServer(apiKey, athleteId)` — validates credentials, registers all 12 tools, connects `StdioServerTransport`. When run directly (`npm run stdio`), reads credentials from `process.env`. The CF Worker entry point (`src/index.ts`) is not affected.
+- **Athlete tools:** `src/tools/athlete.ts` adds read-only profile/search/curve/gear endpoints used by the coach skill for zone resolution and benchmark lookup. `sportSettings` entries use `types[]` arrays, not a single `type` field, and swim threshold pace should be interpreted as `/100m` pace when `pace_units === "SECS_100M"`.
+- **stdio entry point:** `src/stdio.ts` exports `createStdioServer(apiKey, athleteId)` — validates credentials, registers all 18 tools, connects `StdioServerTransport`. When run directly (`npm run stdio`), reads credentials from `process.env`. The CF Worker entry point (`src/index.ts`) is not affected.
 - **No auth in stdio mode:** Credentials are passed directly as env vars by the MCP client. OAuth is CF Worker only.
 
 ## Commands

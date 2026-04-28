@@ -4,6 +4,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { IntervalsClient } from "./client.js";
 import { registerActivityTools } from "./tools/activities.js";
+import { registerAthleteTools } from "./tools/athlete.js";
 import { registerEventTools } from "./tools/events.js";
 import { registerWellnessTools } from "./tools/wellness.js";
 import {
@@ -545,6 +546,7 @@ const apiHandler = {
     });
 
     registerActivityTools(server, client);
+    registerAthleteTools(server, client);
     registerEventTools(server, client);
     registerWellnessTools(server, client);
 

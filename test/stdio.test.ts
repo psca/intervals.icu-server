@@ -18,13 +18,13 @@ describe("createStdioServer", () => {
     vi.clearAllMocks();
   });
 
-  it("creates an McpServer with all 12 tools registered", async () => {
+  it("creates an McpServer with all 18 tools registered", async () => {
     const server = await createStdioServer("test-api-key", "i123");
 
     // McpServer exposes registered tools via _registeredTools (plain object)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const tools = (server as any)._registeredTools as Record<string, unknown>;
-    expect(Object.keys(tools).length).toBe(12);
+    expect(Object.keys(tools).length).toBe(18);
   });
 
   it("registers all expected tool names", async () => {
@@ -43,9 +43,15 @@ describe("createStdioServer", () => {
       "get_activity_route",
       "get_activity_streams",
       "get_activity_weather",
+      "get_athlete_profile",
       "get_event_by_id",
       "get_events",
+      "get_gear",
+      "get_hr_curves",
+      "get_pace_curves",
+      "get_power_curves",
       "get_wellness_data",
+      "search_activities",
     ]);
   });
 

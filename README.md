@@ -1,6 +1,6 @@
 # intervals-mcp
 
-An MCP (Model Context Protocol) server for [intervals.icu](https://intervals.icu) training data. Provides 12 tools for accessing activities, wellness data, events/workouts, and weather analysis -- designed to be consumed by LLM-powered coaching assistants.
+An MCP (Model Context Protocol) server for [intervals.icu](https://intervals.icu) training data. Provides 18 tools for accessing activities, athlete profiles and curves, wellness data, events/workouts, and weather analysis -- designed to be consumed by LLM-powered coaching assistants.
 
 Two modes:
 - **Local (stdio)** -- runs as a local process, no cloud account needed
@@ -16,6 +16,12 @@ Two modes:
 | `get_activity_streams` | Full time-series data (power, HR, etc.) |
 | `get_activity_route` | GPS/route data sampled at regular intervals for route analysis and elevation profiles |
 | `get_activity_weather` | Server-side weather pipeline: GPS + Open-Meteo + headwind/tailwind analysis |
+| `get_athlete_profile` | Athlete profile, thresholds, zones, and baseline settings |
+| `search_activities` | Search activities by name or tag |
+| `get_power_curves` | Peak power curves over a date range |
+| `get_pace_curves` | Peak pace curves and critical speed models over a date range |
+| `get_hr_curves` | Peak heart-rate curves over a date range |
+| `get_gear` | Gear usage summary for bikes, shoes, and other equipment |
 | `get_wellness_data` | HRV, resting HR, CTL/ATL/TSB, sleep, weight |
 | `get_events` | Planned workouts/events by date range |
 | `get_event_by_id` | Single event details |
@@ -161,6 +167,7 @@ src/
   weather.ts            Open-Meteo integration + headwind/tailwind computation
   tools/
     activities.ts       6 activity tools (including weather pipeline)
+    athlete.ts          6 athlete tools (profile, search, curves, gear)
     events.ts           5 event/workout tools
     wellness.ts         1 wellness tool
 test/
@@ -179,3 +186,11 @@ test/
 ```bash
 npm test
 ```
+
+## Credits
+
+Inspired by [mvilanova/intervals-mcp-server](https://github.com/mvilanova/intervals-mcp-server). This project diverged significantly in architecture (TypeScript, Cloudflare Workers, GitHub OAuth) but shares the same goal of connecting AI assistants to intervals.icu training data.
+
+## License
+
+[GNU General Public License v3.0](LICENSE)
