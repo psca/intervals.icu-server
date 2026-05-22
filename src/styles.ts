@@ -42,11 +42,13 @@ export const PAGE_CSS = `
   .error { color: #dc2626; font-size: 13px; margin-bottom: 16px; }
   .provider-actions { display: grid; gap: 10px; margin-top: 20px; }
   .btn-provider {
-    display: block; padding: 10px 14px; border: 1px solid #d1d5db;
+    display: flex; align-items: center; justify-content: center; gap: 10px;
+    padding: 10px 14px; border: 1px solid #d1d5db;
     border-radius: 6px; color: #111; text-decoration: none; font-size: 14px;
     font-weight: 500; text-align: center; background: #fff;
   }
   .btn-provider:hover { background: #f9fafb; border-color: #9ca3af; }
+  .provider-icon { width: 18px; height: 18px; flex: none; }
   .page-actions { margin: 0 0 20px; }
   .page-link {
     display: inline-block; color: #2563eb; text-decoration: none;

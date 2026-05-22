@@ -106,6 +106,21 @@ function helpLink(href = "/help", label = "Help"): string {
   return `<a class="page-link" href="${escapeHtml(href)}">${escapeHtml(label)}</a>`;
 }
 
+function providerIcon(provider: AuthProvider): string {
+  if (provider === "github") {
+    return `<svg class="provider-icon" viewBox="0 0 16 16" aria-hidden="true">
+      <path fill="currentColor" d="M8 0C3.58 0 0 3.67 0 8.2c0 3.63 2.29 6.71 5.47 7.8.4.08.55-.18.55-.39 0-.19-.01-.82-.01-1.48-2.01.38-2.53-.5-2.69-.96-.09-.24-.48-.97-.82-1.16-.28-.16-.68-.55-.01-.56.63-.01 1.08.6 1.23.85.72 1.24 1.87.89 2.33.67.07-.53.28-.89.5-1.09-1.78-.21-3.64-.92-3.64-4.07 0-.9.31-1.63.82-2.21-.08-.21-.36-1.05.08-2.18 0 0 .67-.22 2.2.85a7.38 7.38 0 0 1 4 0c1.53-1.07 2.2-.85 2.2-.85.44 1.13.16 1.97.08 2.18.51.58.82 1.31.82 2.21 0 3.16-1.87 3.86-3.65 4.07.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.19 0 .21.15.47.55.39A8.19 8.19 0 0 0 16 8.2C16 3.67 12.42 0 8 0Z"/>
+    </svg>`;
+  }
+
+  return `<svg class="provider-icon" viewBox="0 0 24 24" aria-hidden="true">
+    <path fill="#4285F4" d="M23.49 12.27c0-.79-.07-1.55-.2-2.27H12v4.3h6.44a5.5 5.5 0 0 1-2.39 3.61v3h3.87c2.26-2.12 3.57-5.24 3.57-8.64Z"/>
+    <path fill="#34A853" d="M12 24c3.24 0 5.95-1.1 7.93-2.99l-3.87-3A7.1 7.1 0 0 1 12 19.2c-3.06 0-5.65-2.1-6.58-4.93H1.42v3.09A11.96 11.96 0 0 0 12 24Z"/>
+    <path fill="#FBBC05" d="M5.42 14.27A7.37 7.37 0 0 1 5.05 12c0-.79.13-1.56.37-2.27V6.64H1.42A12.26 12.26 0 0 0 0 12c0 1.93.45 3.76 1.42 5.36l4-3.09Z"/>
+    <path fill="#EA4335" d="M12 4.8c1.76 0 3.35.62 4.59 1.83l3.44-3.52C17.94 1.1 15.24 0 12 0A11.96 11.96 0 0 0 1.42 6.64l4 3.09C6.35 6.9 8.94 4.8 12 4.8Z"/>
+  </svg>`;
+}
+
 function identityDisplay(identity: AuthIdentity): string {
   if (identity.provider === "google" && identity.emailVerified && identity.email) {
     return identity.email;
@@ -185,8 +200,8 @@ function renderProviderChoicePage(flow: "oauth" | "settings", stateId: string): 
         <h1>Sign in</h1>
         <p class="subtitle">Choose how you want to continue.</p>
         <div class="provider-actions">
-          <a class="btn-provider" href="/login?flow=${flow}&state=${stateId}&provider=github">Continue with ${providerLabel("github")}</a>
-          <a class="btn-provider" href="/login?flow=${flow}&state=${stateId}&provider=google">Continue with ${providerLabel("google")}</a>
+          <a class="btn-provider" href="/login?flow=${flow}&state=${stateId}&provider=github">${providerIcon("github")}<span>Continue with ${providerLabel("github")}</span></a>
+          <a class="btn-provider" href="/login?flow=${flow}&state=${stateId}&provider=google">${providerIcon("google")}<span>Continue with ${providerLabel("google")}</span></a>
         </div>
       </div>
     </body></html>`,
