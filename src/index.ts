@@ -70,6 +70,47 @@ function providerLabel(provider: AuthProvider): string {
   return provider === "github" ? "GitHub" : "Google";
 }
 
+async function resolveIdentity(
+  provider: AuthProvider,
+  code: string,
+  request: Request,
+  env: Env
+): Promise<AuthIdentity> {
+  const token = await exchangeProviderCode(
+    provider,
+    code,
+    providerClientId(env, provider),
+    providerClientSecret(env, provider),
+    callbackUrl(request)
+  );
+  return getProviderIdentity(provider, token);
+}
+
+function authorizationPayload(
+  oauthReqInfo: any,
+  identity: AuthIdentity,
+  userAccountId: string
+) {
+  return {
+    request: oauthReqInfo,
+    userId: userAccountId,
+    metadata: {
+      provider: identity.provider,
+      subject: identity.subject,
+      displayName: identity.displayName,
+      email: identity.email,
+    },
+    scope: oauthReqInfo.scope,
+    props: {
+      accountId: userAccountId,
+      provider: identity.provider,
+      subject: identity.subject,
+      displayName: identity.displayName,
+      email: identity.email,
+    },
+  };
+}
+
 function renderProviderChoicePage(flow: "oauth" | "settings", stateId: string): Response {
   return new Response(
     `<!DOCTYPE html><html><head>
@@ -154,10 +195,10 @@ const defaultHandler = {
     // Verify the user is allowed, then call completeAuthorization so the library
     // issues an auth code and redirects the client back.
     if (url.pathname === "/callback") {
-      const githubCode = url.searchParams.get("code");
+      const authCode = url.searchParams.get("code");
       const stateId = url.searchParams.get("state");
 
-      if (!githubCode || !stateId) {
+      if (!authCode || !stateId) {
         return new Response("Missing code or state", { status: 400 });
       }
 
@@ -169,32 +210,24 @@ const defaultHandler = {
         if (!settingsStateRaw) {
           return new Response("Invalid or expired state", { status: 400 });
         }
-        await env.OAUTH_KV.delete(`settings_state:${stateId}`);
-
         const settingsState = JSON.parse(settingsStateRaw) as SettingsState;
+        await env.OAUTH_KV.delete(`settings_state:${stateId}`);
         if (!isAuthProvider(settingsState.provider)) {
           return new Response("Invalid or expired state", { status: 400 });
         }
 
         let identity: AuthIdentity;
         try {
-          const providerToken = await exchangeProviderCode(
-            settingsState.provider,
-            githubCode,
-            providerClientId(env, settingsState.provider),
-            providerClientSecret(env, settingsState.provider),
-            callbackUrl(request)
-          );
-          identity = await getProviderIdentity(settingsState.provider, providerToken);
+          identity = await resolveIdentity(settingsState.provider, authCode, request, env);
         } catch {
-          return new Response("Provider auth failed", { status: 502 });
+          return new Response(`${providerLabel(settingsState.provider)} auth failed`, { status: 502 });
         }
 
-        const username = identity.displayName;
+        const userAccountId = accountId(identity);
         const sessionToken = crypto.randomUUID();
         await env.OAUTH_KV.put(
           `settings_session:${sessionToken}`,
-          JSON.stringify({ username }),
+          JSON.stringify({ accountId: userAccountId, identity }),
           { expirationTtl: 3600 }
         );
 
@@ -212,37 +245,23 @@ const defaultHandler = {
       if (!isAuthProvider(oauthState.provider)) {
         return new Response("Invalid or expired state", { status: 400 });
       }
-      const oauthReqInfo = oauthState.oauthReqInfo as {
-        scope: string[];
-      };
 
       let identity: AuthIdentity;
       try {
-        const providerToken = await exchangeProviderCode(
-          oauthState.provider,
-          githubCode,
-          providerClientId(env, oauthState.provider),
-          providerClientSecret(env, oauthState.provider),
-          callbackUrl(request)
-        );
-        identity = await getProviderIdentity(oauthState.provider, providerToken);
+        identity = await resolveIdentity(oauthState.provider, authCode, request, env);
       } catch {
-        return new Response("Provider auth failed", { status: 502 });
+        return new Response(`${providerLabel(oauthState.provider)} auth failed`, { status: 502 });
       }
 
-      const username = identity.displayName;
+      const userAccountId = accountId(identity);
 
       // Check if user already has credentials stored
-      const existingCreds = await env.OAUTH_KV.get(`credentials:${username}`);
+      const existingCreds = await env.OAUTH_KV.get(credentialsKey(userAccountId));
       if (existingCreds) {
         // Returning user — complete authorization immediately
-        const { redirectTo } = await env.OAUTH_PROVIDER.completeAuthorization({
-          request: oauthReqInfo,
-          userId: username,
-          metadata: { username },
-          scope: oauthReqInfo.scope,
-          props: { username },
-        });
+        const { redirectTo } = await env.OAUTH_PROVIDER.completeAuthorization(
+          authorizationPayload(oauthState.oauthReqInfo, identity, userAccountId)
+        );
         return Response.redirect(redirectTo, 302);
       }
 
@@ -250,8 +269,8 @@ const defaultHandler = {
       const configureStateId = crypto.randomUUID();
       await env.OAUTH_KV.put(
         `configure_state:${configureStateId}`,
-        JSON.stringify({ oauthReqInfo, username }),
-        { expirationTtl: 600 }
+        JSON.stringify({ oauthReqInfo: oauthState.oauthReqInfo, identity, accountId: userAccountId }),
+        { expirationTtl: STATE_TTL }
       );
       return Response.redirect(
         `${new URL(request.url).origin}/configure?state=${configureStateId}`,
@@ -316,7 +335,11 @@ const defaultHandler = {
 
         // Delete state before processing (replay prevention)
         await env.OAUTH_KV.delete(`configure_state:${postStateId}`);
-        const { oauthReqInfo, username } = JSON.parse(raw);
+        const { oauthReqInfo, identity, accountId: userAccountId } = JSON.parse(raw) as {
+          oauthReqInfo: any;
+          identity: AuthIdentity;
+          accountId: string;
+        };
 
         const valid = await validateIntervalsCredentials(athleteId, apiKey);
         if (!valid) {
@@ -324,7 +347,7 @@ const defaultHandler = {
           const newStateId = crypto.randomUUID();
           await env.OAUTH_KV.put(
             `configure_state:${newStateId}`,
-            JSON.stringify({ oauthReqInfo, username }),
+            JSON.stringify({ oauthReqInfo, identity, accountId: userAccountId }),
             { expirationTtl: 600 }
           );
           return Response.redirect(
@@ -333,19 +356,19 @@ const defaultHandler = {
           );
         }
 
-        const { encryptedApiKey, iv } = await encryptApiKey(apiKey, username, env.CREDENTIALS_MASTER_KEY);
+        const { encryptedApiKey, iv } = await encryptApiKey(
+          apiKey,
+          userAccountId,
+          env.CREDENTIALS_MASTER_KEY
+        );
         await env.OAUTH_KV.put(
-          `credentials:${username}`,
+          credentialsKey(userAccountId),
           JSON.stringify({ athleteId, encryptedApiKey, iv })
         );
 
-        const { redirectTo } = await env.OAUTH_PROVIDER.completeAuthorization({
-          request: oauthReqInfo,
-          userId: username,
-          metadata: { username },
-          scope: oauthReqInfo.scope,
-          props: { username },
-        });
+        const { redirectTo } = await env.OAUTH_PROVIDER.completeAuthorization(
+          authorizationPayload(oauthReqInfo, identity, userAccountId)
+        );
         return Response.redirect(redirectTo, 302);
       }
     }

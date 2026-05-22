@@ -143,7 +143,10 @@ describe("defaultHandler /callback", () => {
   it("returns 502 when GitHub token exchange fails", async () => {
     const env = makeEnv();
     env.OAUTH_KV.get.mockResolvedValue(
-      JSON.stringify({ clientId: "c", redirectUri: "https://r", scope: [], state: "s" })
+      JSON.stringify({
+        oauthReqInfo: { clientId: "c", redirectUri: "https://r", scope: [], state: "s" },
+        provider: "github",
+      })
     );
 
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
@@ -158,7 +161,10 @@ describe("defaultHandler /callback", () => {
   it("redirects to client after successful auth", async () => {
     const env = makeEnv();
     env.OAUTH_KV.get.mockResolvedValue(
-      JSON.stringify({ clientId: "c", redirectUri: "https://r", scope: ["mcp"], state: "s" })
+      JSON.stringify({
+        oauthReqInfo: { clientId: "c", redirectUri: "https://r", scope: ["mcp"], state: "s" },
+        provider: "github",
+      })
     );
     env.OAUTH_PROVIDER.completeAuthorization.mockResolvedValue({
       redirectTo: "https://claude.ai/callback?code=authcode",
@@ -169,7 +175,7 @@ describe("defaultHandler /callback", () => {
         json: () => Promise.resolve({ access_token: "gh_tok" }),
       })
       .mockResolvedValueOnce({
-        json: () => Promise.resolve({ login: "testuser" }),
+        json: () => Promise.resolve({ id: 12345, login: "testuser" }),
       })
     );
 
@@ -183,12 +189,15 @@ describe("defaultHandler /callback", () => {
     const env = makeEnv();
     // KV: first call returns oauth_state (oauthReqInfo), second call returns null (no credentials)
     env.OAUTH_KV.get
-      .mockResolvedValueOnce(JSON.stringify({ clientId: "c", redirectUri: "https://r", scope: [], state: "s" }))
+      .mockResolvedValueOnce(JSON.stringify({
+        oauthReqInfo: { clientId: "c", redirectUri: "https://r", scope: [], state: "s" },
+        provider: "github",
+      }))
       .mockResolvedValueOnce(null); // credentials:<username> not found
 
     vi.stubGlobal("fetch", vi.fn()
       .mockResolvedValueOnce({ json: () => Promise.resolve({ access_token: "gh_tok" }) })
-      .mockResolvedValueOnce({ json: () => Promise.resolve({ login: "testuser" }) })
+      .mockResolvedValueOnce({ json: () => Promise.resolve({ id: 12345, login: "testuser" }) })
     );
 
     const req = new Request("https://mcp.example.com/callback?code=code&state=validstate");
@@ -198,22 +207,34 @@ describe("defaultHandler /callback", () => {
     expect(res.headers.get("Location")).toContain("/configure?state=");
     // oauth_state deleted, configure_state written
     expect(env.OAUTH_KV.delete).toHaveBeenCalledWith("oauth_state:validstate");
+    expect(env.OAUTH_KV.get).toHaveBeenCalledWith("credentials:github:12345");
     expect(env.OAUTH_KV.put).toHaveBeenCalledWith(
       expect.stringMatching(/^configure_state:/),
-      expect.stringContaining("testuser"),
+      expect.stringContaining('"accountId":"github:12345"'),
       expect.objectContaining({ expirationTtl: 600 })
     );
+  });
+
+  it("returns 400 when oauth state has no selected provider", async () => {
+    const env = makeEnv();
+    env.OAUTH_KV.get.mockResolvedValue(JSON.stringify({
+      oauthReqInfo: { clientId: "c", redirectUri: "https://r", scope: [], state: "s" },
+    }));
+
+    const req = new Request("https://mcp.example.com/callback?code=code&state=validstate");
+    const res = await defaultHandler.fetch(req, env);
+    expect(res.status).toBe(400);
   });
 
   it("issues session cookie and redirects to /settings when state is a settings_state", async () => {
     const env = makeEnv();
     env.OAUTH_KV.get
       .mockResolvedValueOnce(null) // oauth_state:<id> not found
-      .mockResolvedValueOnce(JSON.stringify({ placeholder: true })); // settings_state:<id> found
+      .mockResolvedValueOnce(JSON.stringify({ flow: "settings", provider: "github" })); // settings_state:<id> found
 
     vi.stubGlobal("fetch", vi.fn()
       .mockResolvedValueOnce({ json: () => Promise.resolve({ access_token: "gh_tok" }) })
-      .mockResolvedValueOnce({ json: () => Promise.resolve({ login: "testuser" }) })
+      .mockResolvedValueOnce({ json: () => Promise.resolve({ id: 12345, login: "testuser" }) })
     );
 
     const req = new Request("https://mcp.example.com/callback?code=code&state=validstate");
@@ -228,16 +249,32 @@ describe("defaultHandler /callback", () => {
     expect(env.OAUTH_KV.delete).toHaveBeenCalledWith("settings_state:validstate");
   });
 
+  it("returns 400 when settings state has no selected provider", async () => {
+    const env = makeEnv();
+    env.OAUTH_KV.get
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(JSON.stringify({ flow: "settings" }));
+
+    const req = new Request("https://mcp.example.com/callback?code=code&state=validstate");
+    const res = await defaultHandler.fetch(req, env);
+
+    expect(res.status).toBe(400);
+    expect(env.OAUTH_KV.delete).toHaveBeenCalledWith("settings_state:validstate");
+  });
+
   it("calls completeAuthorization directly when credentials already exist", async () => {
     const env = makeEnv();
     env.OAUTH_KV.get
-      .mockResolvedValueOnce(JSON.stringify({ clientId: "c", redirectUri: "https://r", scope: [], state: "s" }))
+      .mockResolvedValueOnce(JSON.stringify({
+        oauthReqInfo: { clientId: "c", redirectUri: "https://r", scope: [], state: "s" },
+        provider: "github",
+      }))
       .mockResolvedValueOnce(JSON.stringify({ athleteId: "i123", encryptedApiKey: "enc", iv: "iv" }));
     env.OAUTH_PROVIDER.completeAuthorization.mockResolvedValue({ redirectTo: "https://claude.ai/cb" });
 
     vi.stubGlobal("fetch", vi.fn()
       .mockResolvedValueOnce({ json: () => Promise.resolve({ access_token: "gh_tok" }) })
-      .mockResolvedValueOnce({ json: () => Promise.resolve({ login: "testuser" }) })
+      .mockResolvedValueOnce({ json: () => Promise.resolve({ id: 12345, login: "testuser" }) })
     );
 
     const req = new Request("https://mcp.example.com/callback?code=code&state=validstate");
@@ -246,6 +283,39 @@ describe("defaultHandler /callback", () => {
     expect(res.status).toBe(302);
     expect(res.headers.get("Location")).toContain("claude.ai");
     expect(env.OAUTH_PROVIDER.completeAuthorization).toHaveBeenCalled();
+  });
+
+  it("uses Google identity and canonical account id for returning users", async () => {
+    const env = makeEnv();
+    env.OAUTH_KV.get
+      .mockResolvedValueOnce(JSON.stringify({
+        oauthReqInfo: { clientId: "c", redirectUri: "https://r", scope: ["mcp"], state: "s" },
+        provider: "google",
+      }))
+      .mockResolvedValueOnce(JSON.stringify({ athleteId: "i123", encryptedApiKey: "enc", iv: "iv" }));
+    env.OAUTH_PROVIDER.completeAuthorization.mockResolvedValue({ redirectTo: "https://claude.ai/cb" });
+
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce({ json: () => Promise.resolve({ access_token: "goog_tok" }) })
+      .mockResolvedValueOnce({ json: () => Promise.resolve({
+        sub: "108765432109876543210",
+        name: "Ada User",
+        email: "ada@example.com",
+        email_verified: true,
+      }) })
+    );
+
+    const req = new Request("https://mcp.example.com/callback?code=code&state=validstate&provider=github");
+    const res = await defaultHandler.fetch(req, env);
+
+    expect(res.status).toBe(302);
+    expect(env.OAUTH_KV.delete).toHaveBeenCalledWith("oauth_state:validstate");
+    expect(env.OAUTH_KV.get).toHaveBeenCalledWith("credentials:google:108765432109876543210");
+    expect(env.OAUTH_PROVIDER.completeAuthorization).toHaveBeenCalledWith(expect.objectContaining({
+      userId: "google:108765432109876543210",
+      metadata: expect.objectContaining({ provider: "google", email: "ada@example.com" }),
+      props: expect.objectContaining({ accountId: "google:108765432109876543210" }),
+    }));
   });
 });
 
@@ -263,7 +333,11 @@ describe("defaultHandler /configure", () => {
   it("GET returns 200 with HTML form when state is valid", async () => {
     const env = makeEnv();
     env.OAUTH_KV.get.mockResolvedValue(
-      JSON.stringify({ oauthReqInfo: { scope: [] }, username: "testuser" })
+      JSON.stringify({
+        oauthReqInfo: { scope: [] },
+        identity: { provider: "github", subject: "12345", displayName: "testuser" },
+        accountId: "github:12345",
+      })
     );
     const req = new Request("https://mcp.example.com/configure?state=validstate");
     const res = await defaultHandler.fetch(req, env);
@@ -289,7 +363,11 @@ describe("defaultHandler /configure", () => {
   it("POST redirects back to /configure with new state on invalid credentials", async () => {
     const env = makeEnv({ CREDENTIALS_MASTER_KEY: "a".repeat(64) });
     env.OAUTH_KV.get.mockResolvedValue(
-      JSON.stringify({ oauthReqInfo: { scope: [] }, username: "testuser" })
+      JSON.stringify({
+        oauthReqInfo: { scope: [] },
+        identity: { provider: "github", subject: "12345", displayName: "testuser" },
+        accountId: "github:12345",
+      })
     );
     // intervals.icu returns 401
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false }));
@@ -315,7 +393,11 @@ describe("defaultHandler /configure", () => {
     const env = makeEnv({ CREDENTIALS_MASTER_KEY: "a".repeat(64) });
     const oauthReqInfo = { scope: ["mcp"] };
     env.OAUTH_KV.get.mockResolvedValue(
-      JSON.stringify({ oauthReqInfo, username: "testuser" })
+      JSON.stringify({
+        oauthReqInfo,
+        identity: { provider: "github", subject: "12345", displayName: "testuser" },
+        accountId: "github:12345",
+      })
     );
     env.OAUTH_PROVIDER.completeAuthorization.mockResolvedValue({
       redirectTo: "https://claude.ai/callback?code=done",
@@ -331,9 +413,13 @@ describe("defaultHandler /configure", () => {
     expect(res.status).toBe(302);
     expect(res.headers.get("Location")).toContain("claude.ai");
     expect(env.OAUTH_KV.put).toHaveBeenCalledWith(
-      "credentials:testuser",
+      "credentials:github:12345",
       expect.stringContaining("athleteId")
     );
+    expect(env.OAUTH_PROVIDER.completeAuthorization).toHaveBeenCalledWith(expect.objectContaining({
+      userId: "github:12345",
+      props: expect.objectContaining({ accountId: "github:12345" }),
+    }));
   });
 });
 
