@@ -248,7 +248,6 @@ function renderHelpPage(origin: string): Response {
         <section class="doc-section" id="intervals-icu">
           <h2>intervals.icu</h2>
           <ol>
-            <li>Open ${helpLink("/settings", "Settings")} and sign in with GitHub or Google.</li>
             <li>Open <a href="https://intervals.icu/settings" target="_blank" rel="noreferrer">intervals.icu/settings</a> and scroll down to <strong>Developer Settings</strong>.</li>
             <li>
               Copy your athlete ID and API key from that section.
@@ -266,7 +265,6 @@ function renderHelpPage(origin: string): Response {
                 </div>
               </div>
             </li>
-            <li>Save the credentials, then reconnect your MCP client if needed.</li>
           </ol>
         </section>
       </div>
