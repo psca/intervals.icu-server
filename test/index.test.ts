@@ -468,8 +468,11 @@ describe("defaultHandler /settings", () => {
     const env = makeEnv();
     // KV "json" mode returns parsed objects — mock accordingly
     env.OAUTH_KV.get
-      .mockResolvedValueOnce({ username: "testuser" }) // settings_session:<token>
-      .mockResolvedValueOnce({ athleteId: "i123", encryptedApiKey: "enc", iv: "iv" }); // credentials:<username>
+      .mockResolvedValueOnce({
+        accountId: "github:12345",
+        identity: { provider: "github", subject: "12345", displayName: "testuser" },
+      })
+      .mockResolvedValueOnce({ athleteId: "i123", encryptedApiKey: "enc", iv: "iv" });
 
     const req = new Request("https://mcp.example.com/settings", {
       headers: { Cookie: "settings_session=mytoken" },
@@ -496,7 +499,10 @@ describe("defaultHandler /settings", () => {
   it("POST /settings/save updates credentials on valid input", async () => {
     const env = makeEnv({ CREDENTIALS_MASTER_KEY: "a".repeat(64) });
     // KV "json" mode returns parsed object
-    env.OAUTH_KV.get.mockResolvedValue({ username: "testuser" });
+    env.OAUTH_KV.get.mockResolvedValue({
+      accountId: "github:12345",
+      identity: { provider: "github", subject: "12345", displayName: "testuser" },
+    });
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true }));
 
     const req = new Request("https://mcp.example.com/settings/save", {
@@ -510,14 +516,17 @@ describe("defaultHandler /settings", () => {
     const res = await defaultHandler.fetch(req, env);
     expect(res.status).toBe(200);
     expect(env.OAUTH_KV.put).toHaveBeenCalledWith(
-      "credentials:testuser",
+      "credentials:github:12345",
       expect.stringContaining("i999")
     );
   });
 
   it("POST /settings/save with blank athleteId returns 400", async () => {
     const env = makeEnv({ CREDENTIALS_MASTER_KEY: "a".repeat(64) });
-    env.OAUTH_KV.get.mockResolvedValue({ username: "testuser" });
+    env.OAUTH_KV.get.mockResolvedValue({
+      accountId: "github:12345",
+      identity: { provider: "github", subject: "12345", displayName: "testuser" },
+    });
 
     const req = new Request("https://mcp.example.com/settings/save", {
       method: "POST",
@@ -537,10 +546,13 @@ describe("defaultHandler /settings", () => {
     const masterKey = "a".repeat(64);
     const env = makeEnv({ CREDENTIALS_MASTER_KEY: masterKey });
     // Encrypt a real key so decryptApiKey succeeds
-    const encrypted = await encryptApiKey("existingkey", "testuser", masterKey);
+    const encrypted = await encryptApiKey("existingkey", "github:12345", masterKey);
     // First get: session lookup; Second get: existing credentials
     env.OAUTH_KV.get
-      .mockResolvedValueOnce({ username: "testuser" })
+      .mockResolvedValueOnce({
+        accountId: "github:12345",
+        identity: { provider: "github", subject: "12345", displayName: "testuser" },
+      })
       .mockResolvedValueOnce({ athleteId: "i123", encryptedApiKey: encrypted.encryptedApiKey, iv: encrypted.iv });
     // validateIntervalsCredentials will call fetch
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true }));
@@ -557,7 +569,7 @@ describe("defaultHandler /settings", () => {
     expect(res.status).toBe(200);
     // Should store the existing encrypted key, not re-encrypt
     expect(env.OAUTH_KV.put).toHaveBeenCalledWith(
-      "credentials:testuser",
+      "credentials:github:12345",
       expect.stringContaining(encrypted.encryptedApiKey)
     );
   });
@@ -566,7 +578,10 @@ describe("defaultHandler /settings", () => {
     const env = makeEnv({ CREDENTIALS_MASTER_KEY: "a".repeat(64) });
     // First get: session lookup; Second get: no existing credentials
     env.OAUTH_KV.get
-      .mockResolvedValueOnce({ username: "testuser" })
+      .mockResolvedValueOnce({
+        accountId: "github:12345",
+        identity: { provider: "github", subject: "12345", displayName: "testuser" },
+      })
       .mockResolvedValueOnce(null);
 
     const req = new Request("https://mcp.example.com/settings/save", {
@@ -586,7 +601,10 @@ describe("defaultHandler /settings", () => {
   it("GET /settings with credentials shows disconnect form", async () => {
     const env = makeEnv();
     env.OAUTH_KV.get
-      .mockResolvedValueOnce({ username: "testuser" })
+      .mockResolvedValueOnce({
+        accountId: "github:12345",
+        identity: { provider: "github", subject: "12345", displayName: "testuser" },
+      })
       .mockResolvedValueOnce({ athleteId: "i123", encryptedApiKey: "enc", iv: "iv" });
 
     const req = new Request("https://mcp.example.com/settings", {
@@ -602,7 +620,10 @@ describe("defaultHandler /settings", () => {
   it("GET /settings without credentials does not show disconnect form", async () => {
     const env = makeEnv();
     env.OAUTH_KV.get
-      .mockResolvedValueOnce({ username: "testuser" })
+      .mockResolvedValueOnce({
+        accountId: "github:12345",
+        identity: { provider: "github", subject: "12345", displayName: "testuser" },
+      })
       .mockResolvedValueOnce(null); // no credentials
 
     const req = new Request("https://mcp.example.com/settings", {
@@ -612,6 +633,31 @@ describe("defaultHandler /settings", () => {
     const body = await res.text();
 
     expect(body).not.toContain("/settings/disconnect");
+  });
+
+  it("GET /settings displays verified Google email", async () => {
+    const env = makeEnv();
+    env.OAUTH_KV.get
+      .mockResolvedValueOnce({
+        accountId: "google:108765432109876543210",
+        identity: {
+          provider: "google",
+          subject: "108765432109876543210",
+          displayName: "Ada User",
+          email: "ada@example.com",
+          emailVerified: true,
+        },
+      })
+      .mockResolvedValueOnce({ athleteId: "i123", encryptedApiKey: "enc", iv: "iv" });
+
+    const req = new Request("https://mcp.example.com/settings", {
+      headers: { Cookie: "settings_session=mytoken" },
+    });
+    const res = await defaultHandler.fetch(req, env);
+    const body = await res.text();
+
+    expect(body).toContain("Signed in with Google as");
+    expect(body).toContain("ada@example.com");
   });
 });
 
@@ -639,7 +685,10 @@ describe("defaultHandler /settings/disconnect", () => {
 
   it("POST with valid session revokes all grants, deletes credentials and session, redirects", async () => {
     const env = makeEnv();
-    env.OAUTH_KV.get.mockResolvedValueOnce({ username: "testuser" });
+    env.OAUTH_KV.get.mockResolvedValueOnce({
+      accountId: "github:12345",
+      identity: { provider: "github", subject: "12345", displayName: "testuser" },
+    });
     env.OAUTH_PROVIDER.listUserGrants.mockResolvedValue({
       items: [{ id: "grant-1" }, { id: "grant-2" }],
       cursor: undefined,
@@ -655,15 +704,18 @@ describe("defaultHandler /settings/disconnect", () => {
     expect(res.headers.get("Location")).toBe("https://mcp.example.com/settings/disconnected");
     expect(res.headers.get("Set-Cookie")).toContain("Max-Age=0");
     expect(res.headers.get("Set-Cookie")).toContain("Path=/settings");
-    expect(env.OAUTH_PROVIDER.revokeGrant).toHaveBeenCalledWith("grant-1", "testuser");
-    expect(env.OAUTH_PROVIDER.revokeGrant).toHaveBeenCalledWith("grant-2", "testuser");
-    expect(env.OAUTH_KV.delete).toHaveBeenCalledWith("credentials:testuser");
+    expect(env.OAUTH_PROVIDER.revokeGrant).toHaveBeenCalledWith("grant-1", "github:12345");
+    expect(env.OAUTH_PROVIDER.revokeGrant).toHaveBeenCalledWith("grant-2", "github:12345");
+    expect(env.OAUTH_KV.delete).toHaveBeenCalledWith("credentials:github:12345");
     expect(env.OAUTH_KV.delete).toHaveBeenCalledWith("settings_session:mytoken");
   });
 
   it("POST with no active grants still deletes credentials and session", async () => {
     const env = makeEnv();
-    env.OAUTH_KV.get.mockResolvedValueOnce({ username: "testuser" });
+    env.OAUTH_KV.get.mockResolvedValueOnce({
+      accountId: "github:12345",
+      identity: { provider: "github", subject: "12345", displayName: "testuser" },
+    });
     env.OAUTH_PROVIDER.listUserGrants.mockResolvedValue({ items: [], cursor: undefined });
 
     const req = new Request("https://mcp.example.com/settings/disconnect", {
@@ -674,13 +726,16 @@ describe("defaultHandler /settings/disconnect", () => {
 
     expect(res.status).toBe(302);
     expect(env.OAUTH_PROVIDER.revokeGrant).not.toHaveBeenCalled();
-    expect(env.OAUTH_KV.delete).toHaveBeenCalledWith("credentials:testuser");
+    expect(env.OAUTH_KV.delete).toHaveBeenCalledWith("credentials:github:12345");
     expect(env.OAUTH_KV.delete).toHaveBeenCalledWith("settings_session:mytoken");
   });
 
   it("POST paginates listUserGrants and revokes grants across all pages", async () => {
     const env = makeEnv();
-    env.OAUTH_KV.get.mockResolvedValueOnce({ username: "testuser" });
+    env.OAUTH_KV.get.mockResolvedValueOnce({
+      accountId: "github:12345",
+      identity: { provider: "github", subject: "12345", displayName: "testuser" },
+    });
     env.OAUTH_PROVIDER.listUserGrants
       .mockResolvedValueOnce({ items: [{ id: "grant-1" }], cursor: "page2cursor" })
       .mockResolvedValueOnce({ items: [{ id: "grant-2" }], cursor: undefined });
@@ -692,15 +747,18 @@ describe("defaultHandler /settings/disconnect", () => {
     await defaultHandler.fetch(req, env);
 
     expect(env.OAUTH_PROVIDER.listUserGrants).toHaveBeenCalledTimes(2);
-    expect(env.OAUTH_PROVIDER.listUserGrants).toHaveBeenNthCalledWith(1, "testuser");
-    expect(env.OAUTH_PROVIDER.listUserGrants).toHaveBeenNthCalledWith(2, "testuser", { cursor: "page2cursor" });
-    expect(env.OAUTH_PROVIDER.revokeGrant).toHaveBeenCalledWith("grant-1", "testuser");
-    expect(env.OAUTH_PROVIDER.revokeGrant).toHaveBeenCalledWith("grant-2", "testuser");
+    expect(env.OAUTH_PROVIDER.listUserGrants).toHaveBeenNthCalledWith(1, "github:12345");
+    expect(env.OAUTH_PROVIDER.listUserGrants).toHaveBeenNthCalledWith(2, "github:12345", { cursor: "page2cursor" });
+    expect(env.OAUTH_PROVIDER.revokeGrant).toHaveBeenCalledWith("grant-1", "github:12345");
+    expect(env.OAUTH_PROVIDER.revokeGrant).toHaveBeenCalledWith("grant-2", "github:12345");
   });
 
   it("POST continues deleting credentials even if one revokeGrant fails", async () => {
     const env = makeEnv();
-    env.OAUTH_KV.get.mockResolvedValueOnce({ username: "testuser" });
+    env.OAUTH_KV.get.mockResolvedValueOnce({
+      accountId: "github:12345",
+      identity: { provider: "github", subject: "12345", displayName: "testuser" },
+    });
     env.OAUTH_PROVIDER.listUserGrants.mockResolvedValue({
       items: [{ id: "grant-1" }, { id: "grant-2" }],
       cursor: undefined,
@@ -716,7 +774,7 @@ describe("defaultHandler /settings/disconnect", () => {
     const res = await defaultHandler.fetch(req, env);
 
     expect(res.status).toBe(302);
-    expect(env.OAUTH_KV.delete).toHaveBeenCalledWith("credentials:testuser");
+    expect(env.OAUTH_KV.delete).toHaveBeenCalledWith("credentials:github:12345");
     expect(env.OAUTH_KV.delete).toHaveBeenCalledWith("settings_session:mytoken");
   });
 });
@@ -741,7 +799,7 @@ describe("apiHandler", () => {
   it("returns 401 when credentials not found in KV", async () => {
     const env = makeEnv({ CREDENTIALS_MASTER_KEY: "a".repeat(64) });
     env.OAUTH_KV.get.mockResolvedValue(null);
-    const ctx = { props: { username: "testuser" } };
+    const ctx = { props: { accountId: "github:12345" } };
 
     const req = new Request("https://mcp.example.com/mcp", { method: "POST" });
     const res = await apiHandler.fetch(req, env, ctx);
@@ -750,15 +808,27 @@ describe("apiHandler", () => {
     expect(body).toContain("/settings");
   });
 
+  it("returns 401 when token props do not include accountId", async () => {
+    const env = makeEnv({ CREDENTIALS_MASTER_KEY: "a".repeat(64) });
+    const ctx = { props: { username: "testuser" } };
+
+    const req = new Request("https://mcp.example.com/mcp", { method: "POST" });
+    const res = await apiHandler.fetch(req, env, ctx);
+
+    expect(res.status).toBe(401);
+    expect(env.OAUTH_KV.get).not.toHaveBeenCalledWith("credentials:undefined", "json");
+  });
+
   it("creates IntervalsClient with decrypted credentials", async () => {
     const { encryptApiKey: enc } = await import("../src/crypto");
     const masterKey = "a".repeat(64);
-    const { encryptedApiKey, iv } = await enc("real-api-key", "testuser", masterKey);
+    const userAccountId = "github:12345";
+    const { encryptedApiKey, iv } = await enc("real-api-key", userAccountId, masterKey);
 
     const env = makeEnv({ CREDENTIALS_MASTER_KEY: masterKey });
     // KV "json" mode returns parsed object — mock accordingly
     env.OAUTH_KV.get.mockResolvedValue({ athleteId: "i123", encryptedApiKey, iv });
-    const ctx = { props: { username: "testuser" } };
+    const ctx = { props: { accountId: userAccountId } };
 
     // The McpServer/transport will fail (not a real MCP request), but we just need
     // to confirm it gets past credential loading without throwing

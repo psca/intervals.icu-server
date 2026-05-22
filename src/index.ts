@@ -48,7 +48,8 @@ interface SettingsState {
 }
 
 interface SettingsSession {
-  username: string;
+  accountId: string;
+  identity: AuthIdentity;
 }
 
 const STATE_TTL = 60 * 10; // 10 minutes
@@ -68,6 +69,22 @@ function providerClientSecret(env: Env, provider: AuthProvider): string {
 
 function providerLabel(provider: AuthProvider): string {
   return provider === "github" ? "GitHub" : "Google";
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function identityDisplay(identity: AuthIdentity): string {
+  if (identity.provider === "google" && identity.emailVerified && identity.email) {
+    return identity.email;
+  }
+  return identity.displayName;
 }
 
 async function resolveIdentity(
@@ -403,7 +420,7 @@ const defaultHandler = {
         return renderProviderChoicePage("settings", stateId);
       }
 
-      const creds = await env.OAUTH_KV.get(`credentials:${session.username}`, "json") as StoredCredentials | null;
+      const creds = await env.OAUTH_KV.get(credentialsKey(session.accountId), "json") as StoredCredentials | null;
 
       return new Response(
         `<!DOCTYPE html><html><head>
@@ -413,11 +430,11 @@ const defaultHandler = {
         </head><body>
           <div class="card">
             <h1>intervals.icu Settings</h1>
-            <p class="subtitle">Signed in as <strong>${session.username}</strong></p>
+            <p class="subtitle">Signed in with ${providerLabel(session.identity.provider)} as <strong>${escapeHtml(identityDisplay(session.identity))}</strong></p>
             <form method="POST" action="/settings/save">
               <div class="field">
                 <label for="athleteId">Athlete ID</label>
-                <input type="text" id="athleteId" name="athleteId" value="${creds?.athleteId ?? ""}" required>
+                <input type="text" id="athleteId" name="athleteId" value="${escapeHtml(creds?.athleteId ?? "")}" required>
               </div>
               <div class="field">
                 <label for="apiKey">API Key <span class="hint">(leave blank to keep current)</span></label>
@@ -493,10 +510,10 @@ const defaultHandler = {
             { status: 400, headers: { "Content-Type": "text/html; charset=utf-8", "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'" } }
           );
         }
-        encResult = await encryptApiKey(apiKey, session.username, env.CREDENTIALS_MASTER_KEY);
+        encResult = await encryptApiKey(apiKey, session.accountId, env.CREDENTIALS_MASTER_KEY);
       } else {
         // No API key — keep existing encrypted key
-        const existingCreds = await env.OAUTH_KV.get(`credentials:${session.username}`, "json") as {
+        const existingCreds = await env.OAUTH_KV.get(credentialsKey(session.accountId), "json") as {
           athleteId: string; encryptedApiKey: string; iv: string;
         } | null;
         if (!existingCreds) {
@@ -518,7 +535,7 @@ const defaultHandler = {
         // Validate existing key works with the (possibly new) athlete ID
         const existingApiKey = await decryptApiKey(
           existingCreds.encryptedApiKey, existingCreds.iv,
-          session.username, env.CREDENTIALS_MASTER_KEY
+          session.accountId, env.CREDENTIALS_MASTER_KEY
         );
         const valid = await validateIntervalsCredentials(athleteId, existingApiKey);
         if (!valid) {
@@ -541,7 +558,7 @@ const defaultHandler = {
       }
 
       await env.OAUTH_KV.put(
-        `credentials:${session.username}`,
+        credentialsKey(session.accountId),
         JSON.stringify({ athleteId, encryptedApiKey: encResult.encryptedApiKey, iv: encResult.iv })
       );
 
@@ -590,23 +607,23 @@ const defaultHandler = {
       const session = await env.OAUTH_KV.get(`settings_session:${sessionToken}`, "json") as SettingsSession | null;
       if (!session) return new Response("Session expired", { status: 401 });
 
-      const { username } = session;
+      const userAccountId = session.accountId;
 
       // Paginate through all grants and collect them
       const grants: Array<{ id: string }> = [];
       let cursor: string | undefined;
       do {
         const result = cursor
-          ? await env.OAUTH_PROVIDER.listUserGrants(username, { cursor })
-          : await env.OAUTH_PROVIDER.listUserGrants(username);
+          ? await env.OAUTH_PROVIDER.listUserGrants(userAccountId, { cursor })
+          : await env.OAUTH_PROVIDER.listUserGrants(userAccountId);
         grants.push(...result.items);
         cursor = result.cursor;
       } while (cursor);
 
       // Best-effort revocation — a single failure must not block credential deletion
-      await Promise.allSettled(grants.map(g => env.OAUTH_PROVIDER.revokeGrant(g.id, username)));
+      await Promise.allSettled(grants.map(g => env.OAUTH_PROVIDER.revokeGrant(g.id, userAccountId)));
 
-      await env.OAUTH_KV.delete(`credentials:${username}`);
+      await env.OAUTH_KV.delete(credentialsKey(userAccountId));
       await env.OAUTH_KV.delete(`settings_session:${sessionToken}`);
 
       return new Response(null, {
@@ -635,8 +652,15 @@ const apiHandler = {
       });
     }
 
-    const props = ctx.props as { username: string };
-    const creds = await env.OAUTH_KV.get(`credentials:${props.username}`, "json") as StoredCredentials | null;
+    const props = ctx.props as { accountId?: string };
+    if (!props.accountId) {
+      return new Response(
+        "No intervals.icu credentials found. Visit /settings to configure your account.",
+        { status: 401 }
+      );
+    }
+
+    const creds = await env.OAUTH_KV.get(credentialsKey(props.accountId), "json") as StoredCredentials | null;
 
     if (!creds) {
       return new Response(
@@ -648,7 +672,7 @@ const apiHandler = {
     const apiKey = await decryptApiKey(
       creds.encryptedApiKey,
       creds.iv,
-      props.username,
+      props.accountId,
       env.CREDENTIALS_MASTER_KEY
     );
 
