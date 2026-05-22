@@ -1,0 +1,661 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Google Login for Remote MCP Auth</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #eef1f5;
+      --panel: #ffffff;
+      --ink: #18202b;
+      --muted: #687385;
+      --line: #d9dee7;
+      --blue: #2463eb;
+      --green: #16835f;
+      --red: #c0392b;
+      --code: #111827;
+      --soft-blue: #eaf1ff;
+      --soft-green: #e9f7f0;
+      --soft-red: #fff0ee;
+      --shadow: 0 18px 55px rgba(22, 32, 48, .13);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+      color: var(--ink);
+      background:
+        linear-gradient(180deg, #f9fafc 0%, var(--bg) 100%);
+      overflow: hidden;
+    }
+
+    .deck {
+      min-height: 100vh;
+      display: grid;
+      grid-template-rows: 1fr auto;
+      padding: 28px;
+      gap: 18px;
+    }
+
+    .slide {
+      display: none;
+      width: min(1180px, 100%);
+      min-height: min(680px, calc(100vh - 112px));
+      margin: 0 auto;
+      background: var(--panel);
+      border: 1px solid rgba(24, 32, 43, .08);
+      box-shadow: var(--shadow);
+      border-radius: 8px;
+      padding: clamp(28px, 4vw, 58px);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .slide.active {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .kicker {
+      color: var(--blue);
+      font-size: 13px;
+      line-height: 1.2;
+      font-weight: 700;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      margin-bottom: 16px;
+    }
+
+    h1, h2 {
+      margin: 0;
+      line-height: 1.05;
+      letter-spacing: 0;
+    }
+
+    h1 {
+      max-width: 920px;
+      font-size: clamp(42px, 6vw, 76px);
+      font-weight: 760;
+    }
+
+    h2 {
+      max-width: 880px;
+      font-size: clamp(32px, 4.2vw, 54px);
+      font-weight: 730;
+      margin-bottom: 24px;
+    }
+
+    p {
+      font-size: clamp(18px, 2vw, 25px);
+      line-height: 1.38;
+      margin: 0 0 18px;
+      max-width: 900px;
+    }
+
+    ul, ol {
+      margin: 0;
+      padding-left: 24px;
+      max-width: 980px;
+    }
+
+    li {
+      font-size: clamp(17px, 1.8vw, 23px);
+      line-height: 1.42;
+      margin: 0 0 13px;
+      padding-left: 4px;
+    }
+
+    code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+      color: var(--code);
+      background: #f3f5f8;
+      border: 1px solid #e3e7ee;
+      border-radius: 5px;
+      padding: .12em .32em;
+      font-size: .88em;
+    }
+
+    pre {
+      margin: 20px 0 0;
+      padding: 20px 22px;
+      max-width: 920px;
+      overflow: auto;
+      background: #101722;
+      color: #eef4ff;
+      border-radius: 8px;
+      font-size: clamp(15px, 1.5vw, 20px);
+      line-height: 1.45;
+    }
+
+    pre code {
+      color: inherit;
+      background: transparent;
+      border: 0;
+      padding: 0;
+      font-size: inherit;
+    }
+
+    .lead {
+      margin-top: 24px;
+      color: var(--muted);
+      font-size: clamp(20px, 2.2vw, 28px);
+      max-width: 780px;
+    }
+
+    .note {
+      margin-top: auto;
+      padding: 16px 18px;
+      border: 1px solid var(--line);
+      border-left: 5px solid var(--blue);
+      background: #f8fafc;
+      border-radius: 7px;
+      color: #344155;
+      font-size: clamp(15px, 1.5vw, 19px);
+      max-width: 920px;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 18px;
+      margin-top: 8px;
+      max-width: 980px;
+    }
+
+    .card {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 20px;
+      background: #fbfcfe;
+    }
+
+    .card h3 {
+      margin: 0 0 8px;
+      font-size: clamp(18px, 1.8vw, 24px);
+    }
+
+    .card p, .card li {
+      font-size: clamp(15px, 1.55vw, 19px);
+      line-height: 1.4;
+    }
+
+    .card p:last-child { margin-bottom: 0; }
+
+    .flow {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+      max-width: 1040px;
+      margin-top: 18px;
+    }
+
+    .step {
+      min-height: 132px;
+      padding: 16px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fbfcfe;
+      position: relative;
+    }
+
+    .step strong {
+      display: block;
+      font-size: clamp(15px, 1.45vw, 19px);
+      margin-bottom: 8px;
+    }
+
+    .step span {
+      display: block;
+      color: var(--muted);
+      font-size: clamp(13px, 1.2vw, 16px);
+      line-height: 1.36;
+    }
+
+    .badge-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 20px;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 36px;
+      padding: 7px 12px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: #fff;
+      color: #334155;
+      font-size: clamp(14px, 1.4vw, 18px);
+      font-weight: 600;
+    }
+
+    .badge.blue { background: var(--soft-blue); border-color: #c9dbff; color: #1744a2; }
+    .badge.green { background: var(--soft-green); border-color: #c7ead9; color: #0d6a4b; }
+    .badge.red { background: var(--soft-red); border-color: #ffd0c9; color: #a82a1c; }
+
+    .controls {
+      width: min(1180px, 100%);
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: 44px 1fr 44px;
+      gap: 14px;
+      align-items: center;
+    }
+
+    .nav-btn {
+      width: 44px;
+      height: 44px;
+      border-radius: 8px;
+      border: 1px solid var(--line);
+      background: #fff;
+      color: var(--ink);
+      font-size: 24px;
+      line-height: 1;
+      cursor: pointer;
+      box-shadow: 0 2px 8px rgba(22, 32, 48, .08);
+    }
+
+    .nav-btn:disabled {
+      color: #a6afbd;
+      cursor: default;
+      box-shadow: none;
+    }
+
+    .progress-wrap {
+      height: 44px;
+      display: grid;
+      grid-template-rows: 1fr auto;
+      align-items: end;
+      gap: 7px;
+    }
+
+    .progress {
+      height: 7px;
+      background: #dfe5ee;
+      border-radius: 999px;
+      overflow: hidden;
+    }
+
+    .bar {
+      height: 100%;
+      width: 0;
+      background: linear-gradient(90deg, var(--blue), var(--green));
+      border-radius: 999px;
+      transition: width .18s ease;
+    }
+
+    .counter {
+      color: var(--muted);
+      font-size: 13px;
+      text-align: center;
+    }
+
+    .title-mark {
+      position: absolute;
+      right: clamp(28px, 4vw, 58px);
+      bottom: clamp(28px, 4vw, 58px);
+      display: grid;
+      grid-template-columns: 68px 68px;
+      gap: 12px;
+    }
+
+    .provider {
+      height: 68px;
+      border-radius: 8px;
+      display: grid;
+      place-items: center;
+      font-size: 22px;
+      font-weight: 800;
+      border: 1px solid var(--line);
+      background: #f8fafc;
+    }
+
+    .provider.google { color: #1a73e8; }
+    .provider.github { color: #20242a; }
+
+    @media (max-width: 780px) {
+      body { overflow: auto; }
+      .deck { padding: 16px; }
+      .slide {
+        min-height: calc(100vh - 94px);
+        padding: 26px;
+      }
+      .grid, .flow { grid-template-columns: 1fr; }
+      .title-mark { display: none; }
+    }
+
+    @media print {
+      body {
+        overflow: visible;
+        background: #fff;
+      }
+      .deck {
+        display: block;
+        padding: 0;
+      }
+      .slide,
+      .slide.active {
+        display: flex;
+        min-height: 100vh;
+        width: 100%;
+        box-shadow: none;
+        border: 0;
+        border-radius: 0;
+        page-break-after: always;
+      }
+      .controls { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <main class="deck">
+    <section class="slide active">
+      <div class="kicker">Design Review</div>
+      <h1>Google Login for Remote MCP Auth</h1>
+      <p class="lead">Add Google login while keeping GitHub, using provider-scoped accounts and a normal choice screen.</p>
+      <div class="badge-row">
+        <span class="badge blue">Cloudflare Worker</span>
+        <span class="badge green">GitHub + Google</span>
+        <span class="badge red">No legacy migration</span>
+      </div>
+      <div class="title-mark" aria-hidden="true">
+        <div class="provider github">GH</div>
+        <div class="provider google">G</div>
+      </div>
+    </section>
+
+    <section class="slide">
+      <div class="kicker">Goal</div>
+      <h2>Give non-technical users a familiar login path</h2>
+      <ul>
+        <li>Keep GitHub login for existing developer-oriented usage.</li>
+        <li>Add Google login for a more common consumer UX.</li>
+        <li>Collect intervals.icu athlete ID and API key after OAuth login.</li>
+        <li>Do not migrate existing credentials; current users will re-auth and re-enter intervals.icu credentials once.</li>
+      </ul>
+      <div class="note">The auth change is only for remote Worker mode. Local stdio mode stays unchanged.</div>
+    </section>
+
+    <section class="slide">
+      <div class="kicker">Current State</div>
+      <h2>GitHub is wired directly into the login flow</h2>
+      <div class="flow">
+        <div class="step"><strong>/authorize</strong><span>Parse MCP OAuth request and redirect straight to GitHub.</span></div>
+        <div class="step"><strong>/callback</strong><span>Exchange GitHub code and read GitHub username.</span></div>
+        <div class="step"><strong>/configure</strong><span>Collect intervals.icu credentials for first-time users.</span></div>
+        <div class="step"><strong>/mcp</strong><span>Use OAuthProvider props to load encrypted credentials.</span></div>
+      </div>
+      <div class="note">Credentials are currently keyed as <code>credentials:&lt;github_username&gt;</code>, and encryption also uses that username as context.</div>
+    </section>
+
+    <section class="slide">
+      <div class="kicker">Account Model</div>
+      <h2>Provider plus stable subject is the canonical user id</h2>
+      <pre><code>&lt;provider&gt;:&lt;stable-subject&gt;
+
+github:12345678
+google:108765432109876543210</code></pre>
+      <div class="grid">
+        <div class="card">
+          <h3>Used for</h3>
+          <ul>
+            <li>OAuthProvider userId</li>
+            <li>Token props</li>
+            <li>Credentials KV keys</li>
+            <li>Settings sessions</li>
+            <li>Encryption context</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>Not used for identity</h3>
+          <ul>
+            <li>Email address</li>
+            <li>GitHub login name</li>
+            <li>Display name</li>
+            <li>Any cross-provider match</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide">
+      <div class="kicker">Identity Abstraction</div>
+      <h2>Replace GitHub-only helpers with provider implementations</h2>
+      <pre><code>type AuthProvider = "github" | "google";
+
+interface AuthIdentity {
+  provider: AuthProvider;
+  subject: string;
+  displayName: string;
+  email?: string;
+  emailVerified?: boolean;
+}</code></pre>
+      <ul>
+        <li>GitHub subject: stable numeric <code>id</code>; display name: <code>login</code>.</li>
+        <li>Google subject: OIDC <code>sub</code>; scopes: <code>openid email profile</code>.</li>
+        <li>Email can be displayed only when verified, never used as the key.</li>
+      </ul>
+    </section>
+
+    <section class="slide">
+      <div class="kicker">Provider Choice</div>
+      <h2>Both OAuth entry points start with a choice screen</h2>
+      <div class="grid">
+        <div class="card">
+          <h3>MCP authorization</h3>
+          <ol>
+            <li><code>/authorize</code> parses MCP OAuth request.</li>
+            <li>Store <code>oauth_state:&lt;id&gt;</code>.</li>
+            <li>Render GitHub and Google buttons.</li>
+            <li><code>/login</code> validates state and redirects to selected provider.</li>
+          </ol>
+        </div>
+        <div class="card">
+          <h3>Settings login</h3>
+          <ol>
+            <li><code>/settings</code> creates <code>settings_state:&lt;id&gt;</code>.</li>
+            <li>Render the same provider buttons.</li>
+            <li><code>/login</code> records selected provider in state.</li>
+            <li>Provider redirects back to shared <code>/callback</code>.</li>
+          </ol>
+        </div>
+      </div>
+      <div class="note">The callback must read the provider from KV state. It must not trust provider query parameters.</div>
+    </section>
+
+    <section class="slide">
+      <div class="kicker">Callback</div>
+      <h2>One callback handles both providers and both flows</h2>
+      <ol>
+        <li>Read <code>code</code> and <code>state</code>.</li>
+        <li>Check <code>oauth_state:&lt;state&gt;</code>, then <code>settings_state:&lt;state&gt;</code>.</li>
+        <li>Read selected provider from the validated state record.</li>
+        <li>Exchange the code and resolve <code>AuthIdentity</code>.</li>
+        <li>Compute <code>accountId</code>.</li>
+      </ol>
+      <div class="grid">
+        <div class="card"><h3>Returning user</h3><p>Credentials exist, so call <code>completeAuthorization</code> with canonical <code>userId</code> and props.</p></div>
+        <div class="card"><h3>First-time user</h3><p>No credentials, so store identity in <code>configure_state</code> and redirect to <code>/configure</code>.</p></div>
+      </div>
+    </section>
+
+    <section class="slide">
+      <div class="kicker">Credentials</div>
+      <h2>Everything keys off the canonical account id</h2>
+      <pre><code>credentials:&lt;accountId&gt;
+
+credentials:github:12345678
+credentials:google:108765432109876543210</code></pre>
+      <ul>
+        <li><code>/configure</code> stores encrypted intervals.icu credentials under this key.</li>
+        <li><code>/settings/save</code> updates the same provider-scoped key.</li>
+        <li><code>/settings/disconnect</code> deletes this key and revokes grants for the same account id.</li>
+        <li><code>apiHandler</code> reads credentials using <code>ctx.props.accountId</code>.</li>
+      </ul>
+    </section>
+
+    <section class="slide">
+      <div class="kicker">No Legacy Migration</div>
+      <h2>Existing records are intentionally left behind</h2>
+      <ul>
+        <li>Old keys like <code>credentials:&lt;github_login&gt;</code> are ignored.</li>
+        <li>Current users re-authenticate and re-enter intervals.icu credentials.</li>
+        <li>Old OAuth grants may remain until expiry or manual cleanup.</li>
+        <li>The implementation avoids decrypt-old-key and re-encrypt-new-key migration logic.</li>
+      </ul>
+      <div class="note">This keeps the account model uniform from day one of Google support.</div>
+    </section>
+
+    <section class="slide">
+      <div class="kicker">Configuration</div>
+      <h2>Add Google OAuth configuration beside GitHub</h2>
+      <div class="grid">
+        <div class="card">
+          <h3>Existing</h3>
+          <pre><code>GITHUB_CLIENT_ID
+GITHUB_CLIENT_SECRET</code></pre>
+        </div>
+        <div class="card">
+          <h3>New</h3>
+          <pre><code>GOOGLE_CLIENT_ID
+GOOGLE_CLIENT_SECRET</code></pre>
+        </div>
+      </div>
+      <p>The Google OAuth web client redirect URI is <code>https://&lt;worker-host&gt;/callback</code>.</p>
+    </section>
+
+    <section class="slide">
+      <div class="kicker">Security</div>
+      <h2>Security decisions to preserve in implementation</h2>
+      <ul>
+        <li>No automatic cross-provider account linking by email.</li>
+        <li>No GitHub <code>login</code> as the canonical subject.</li>
+        <li>No provider value trusted from callback query parameters.</li>
+        <li>Short-lived state records for OAuth, settings, and configure flows.</li>
+        <li>HTML-escape display name, email, and athlete ID before rendering.</li>
+        <li>Use Google userinfo first; validate ID tokens fully if introduced later.</li>
+      </ul>
+    </section>
+
+    <section class="slide">
+      <div class="kicker">Testing</div>
+      <h2>Coverage should follow the identity boundary</h2>
+      <div class="grid">
+        <div class="card">
+          <h3>Auth helpers</h3>
+          <ul>
+            <li>GitHub URL and stable id identity</li>
+            <li>Google URL scopes and userinfo identity</li>
+            <li>Canonical <code>accountId</code> construction</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>Worker flows</h3>
+          <ul>
+            <li>Provider choice and state validation</li>
+            <li>Callback reads provider from KV</li>
+            <li>Configure, settings, disconnect, and MCP lookup use <code>accountId</code></li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide">
+      <div class="kicker">Docs</div>
+      <h2>README and AGENTS need the new operating model</h2>
+      <ul>
+        <li>Remote auth supports GitHub or Google.</li>
+        <li>Users are separate per provider.</li>
+        <li>Existing pre-Google credentials are not migrated.</li>
+        <li>GitHub and Google OAuth setup instructions are both documented.</li>
+        <li><code>GOOGLE_CLIENT_ID</code> and <code>GOOGLE_CLIENT_SECRET</code> are documented.</li>
+      </ul>
+    </section>
+
+    <section class="slide">
+      <div class="kicker">Out of Scope</div>
+      <h2>Keep this release focused</h2>
+      <div class="badge-row">
+        <span class="badge red">No email auto-linking</span>
+        <span class="badge red">No manual account linking</span>
+        <span class="badge red">No legacy credential migration</span>
+        <span class="badge red">No stdio changes</span>
+      </div>
+      <p class="lead">The narrow target is a clean multi-provider login layer for the remote Worker.</p>
+    </section>
+
+    <section class="slide">
+      <div class="kicker">Decision Summary</div>
+      <h2>Recommended implementation path</h2>
+      <ol>
+        <li>Add provider abstraction and canonical account id helpers.</li>
+        <li>Add provider choice for <code>/authorize</code> and <code>/settings</code>.</li>
+        <li>Use GitHub numeric id and Google OIDC <code>sub</code> as subjects.</li>
+        <li>Store credentials under <code>credentials:&lt;accountId&gt;</code> and use the same account id for OAuth grants.</li>
+        <li>Update tests, docs, and Cloudflare configuration.</li>
+      </ol>
+      <div class="note">Review question: does this scope match what you want for the first Google-login release?</div>
+    </section>
+
+    <nav class="controls" aria-label="Slide controls">
+      <button class="nav-btn" id="prev" type="button" aria-label="Previous slide">&lt;</button>
+      <div class="progress-wrap">
+        <div class="progress" aria-hidden="true"><div class="bar" id="bar"></div></div>
+        <div class="counter" id="counter"></div>
+      </div>
+      <button class="nav-btn" id="next" type="button" aria-label="Next slide">&gt;</button>
+    </nav>
+  </main>
+
+  <script>
+    const slides = Array.from(document.querySelectorAll(".slide"));
+    const prev = document.getElementById("prev");
+    const next = document.getElementById("next");
+    const bar = document.getElementById("bar");
+    const counter = document.getElementById("counter");
+    let current = 0;
+
+    function show(index) {
+      current = Math.max(0, Math.min(slides.length - 1, index));
+      slides.forEach((slide, i) => slide.classList.toggle("active", i === current));
+      prev.disabled = current === 0;
+      next.disabled = current === slides.length - 1;
+      bar.style.width = `${((current + 1) / slides.length) * 100}%`;
+      counter.textContent = `${current + 1} / ${slides.length}`;
+      history.replaceState(null, "", `#${current + 1}`);
+    }
+
+    prev.addEventListener("click", () => show(current - 1));
+    next.addEventListener("click", () => show(current + 1));
+
+    window.addEventListener("keydown", (event) => {
+      if (event.key === "ArrowRight" || event.key === "PageDown" || event.key === " ") {
+        event.preventDefault();
+        show(current + 1);
+      }
+      if (event.key === "ArrowLeft" || event.key === "PageUp") {
+        event.preventDefault();
+        show(current - 1);
+      }
+      if (event.key === "Home") {
+        event.preventDefault();
+        show(0);
+      }
+      if (event.key === "End") {
+        event.preventDefault();
+        show(slides.length - 1);
+      }
+    });
+
+    const hashIndex = Number.parseInt(window.location.hash.slice(1), 10);
+    show(Number.isFinite(hashIndex) ? hashIndex - 1 : 0);
+  </script>
+</body>
+</html>

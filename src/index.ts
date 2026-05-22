@@ -315,7 +315,7 @@ const defaultHandler = {
             ${creds ? `
             <div class="danger-zone">
               <h2>Danger zone</h2>
-              <p>Removes your credentials and disconnects all MCP clients (e.g. Claude Desktop). You will need to re-authorise from scratch.</p>
+              <p>Removes your credentials and disconnects all MCP clients (e.g. Claude Desktop). You will need to re-authorise.</p>
               <form method="POST" action="/settings/disconnect">
                 <button type="submit" class="btn-danger" onclick="return confirm('Disconnect all MCP clients and remove your intervals.icu credentials. Continue?')">Disconnect account</button>
               </form>

@@ -1,5 +1,9 @@
 # AGENTS.md
 
+## Source of truth
+
+`AGENTS.md` is the canonical agent instruction file for this repository. `CLAUDE.md` must remain a symlink to `AGENTS.md` and should not be edited independently.
+
 ## Project overview
 
 TypeScript Cloudflare Worker implementing an MCP server for intervals.icu training data. Provides 18 tools for activities, athlete profiles and curves, wellness, events, and weather analysis. Access is controlled via GitHub OAuth — any GitHub user can authenticate. Each user provides their own intervals.icu athlete ID and API key, collected during first-time OAuth via a `/configure` form and stored AES-256-GCM encrypted in OAUTH_KV. Credentials are manageable via the `/settings` page.
@@ -19,7 +23,8 @@ TypeScript Cloudflare Worker implementing an MCP server for intervals.icu traini
 ```
 src/index.ts          -- CF Worker entry point; OAuthProvider as default export
                          defaultHandler: handles /authorize, /callback, /configure (GET+POST),
-                           /settings, /settings/save
+                           /settings, /settings/save, /settings/disconnect,
+                           /settings/disconnected
                          apiHandler: handles /mcp (only reached after Bearer token validation)
 src/stdio.ts          -- Node.js stdio entry point; spawned by local MCP clients via npm run stdio
                          exports createStdioServer(apiKey, athleteId)
@@ -37,14 +42,19 @@ src/tools/            -- Tool registration files (one per domain)
   athlete.ts          -- 6 tools: profile, search, power/pace/HR curves, gear
   events.ts           -- 5 tools: list, get, create/update, delete, delete by range
   wellness.ts         -- 1 tool: wellness data (HRV, CTL/ATL/TSB, sleep)
+openapi-spec.json     -- OpenAPI reference for intervals.icu endpoints
+scripts/              -- Helper scripts for manual endpoint checks
+  test-new-endpoints.sh
 tsconfig.stdio.json   -- Node.js tsconfig ("types": ["node"]), excludes CF types; used by npm run stdio
 vitest.config.ts      -- cloudflare:workers module stub config (at project root, not inside test/)
 test/                 -- Unit tests (vitest)
+  activities.test.ts  -- Activity tool sampling/route unit tests
   index.test.ts       -- defaultHandler + apiHandler integration tests
   auth.test.ts        -- GitHub OAuth helper unit tests
   client.test.ts      -- IntervalsClient unit tests
   crypto.test.ts      -- HKDF+AES-GCM encryption unit tests
   athlete.test.ts     -- Athlete tool formatter + endpoint contract unit tests
+  events.test.ts      -- Event tool contracts and safety behavior unit tests
   formatting.test.ts  -- Response formatting unit tests
   stdio.test.ts       -- 4 tests: tool count, tool names, missing credential errors
   weather.test.ts     -- Weather pipeline unit tests
@@ -55,6 +65,7 @@ test/                 -- Unit tests (vitest)
 
 - **Stateless per-request:** Each request creates a new `McpServer` + `IntervalsClient`. No session state, no Durable Objects. `sessionIdGenerator: undefined` disables MCP sessions.
 - **Auth gating:** `OAuthProvider` validates the Bearer token and calls `apiHandler` only on success. Unauthenticated requests to `/mcp` get a 401 before any MCP work is done.
+- **MCP method handling:** `apiHandler` only accepts POST. Other methods return 405 with `Allow: POST`, which prevents stateless SSE/GET probes from hanging the Worker.
 - **Open access:** Any GitHub user can authenticate. Access is gated by valid intervals.icu credentials, not a username allowlist.
 - **Unified callback:** Both MCP OAuth and settings OAuth redirect to `/callback`. The handler checks `oauth_state:<id>` first; if not found, tries `settings_state:<id>` to determine the flow.
 - **OAuth state:** During `/authorize`, a UUID state ID is stored in KV (`oauth_state:<id>`) with a 10-minute TTL, carrying the `oauthReqInfo` through the GitHub round-trip.
@@ -68,7 +79,7 @@ test/                 -- Unit tests (vitest)
 - **Weather pipeline:** `get_activity_weather` does everything server-side: fetches GPS streams, calls Open-Meteo (forecast or archive based on age), computes per-waypoint headwind/tailwind using circular bearing math.
 - **Circular math:** Wind direction averaging uses trigonometric circular mean (atan2 of sin/cos sums). Headwind detection uses `(... + 360) % 360` to handle JS negative modulo.
 - **Athlete tools:** `src/tools/athlete.ts` adds read-only profile/search/curve/gear endpoints used by the coach skill for zone resolution and benchmark lookup. `sportSettings` entries use `types[]` arrays, not a single `type` field, and swim threshold pace should be interpreted as `/100m` pace when `pace_units === "SECS_100M"`.
-- **stdio entry point:** `src/stdio.ts` exports `createStdioServer(apiKey, athleteId)` — validates credentials, registers all 18 tools, connects `StdioServerTransport`. When run directly (`npm run stdio`), reads credentials from `process.env`. The CF Worker entry point (`src/index.ts`) is not affected.
+- **stdio entry point:** `src/stdio.ts` exports `createStdioServer(apiKey, athleteId)` — validates credentials, registers all 18 tools, connects `StdioServerTransport`. When run directly (`npm run stdio`), reads `API_KEY` and `ATHLETE_ID` from `process.env`. The CF Worker entry point (`src/index.ts`) is not affected.
 - **No auth in stdio mode:** Credentials are passed directly as env vars by the MCP client. OAuth is CF Worker only.
 
 ## Commands
@@ -78,7 +89,7 @@ npm test           # run all tests (vitest)
 npm run test:watch # run tests in watch mode
 npm run dev        # local dev server (wrangler dev)
 npm run deploy     # deploy to Cloudflare (wrangler deploy)
-npm run stdio      # run stdio MCP server locally (requires INTERVALS_API_KEY + INTERVALS_ATHLETE_ID env vars)
+npm run stdio      # run stdio MCP server locally (requires API_KEY + ATHLETE_ID env vars)
 ```
 
 ## Secrets
