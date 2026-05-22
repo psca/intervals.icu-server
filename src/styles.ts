@@ -63,7 +63,7 @@ export const PAGE_CSS = `
   .doc-section { margin-top: 28px; }
   .doc-section ol { margin: 12px 0 0 20px; }
   .doc-section li + li { margin-top: 8px; }
-  code {
+  .docs-card code {
     display: inline-block; padding: 2px 6px; border-radius: 4px;
     background: #f3f4f6; color: #111827; font-size: 13px;
     font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;

@@ -103,7 +103,7 @@ function escapeHtml(value: string): string {
 }
 
 function helpLink(href = "/help", label = "Help"): string {
-  return `<a class="page-link" href="${href}">${escapeHtml(label)}</a>`;
+  return `<a class="page-link" href="${escapeHtml(href)}">${escapeHtml(label)}</a>`;
 }
 
 function identityDisplay(identity: AuthIdentity): string {
