@@ -210,17 +210,24 @@ const defaultHandler = {
       if (!raw) return new Response("Invalid or expired state", { status: 400 });
 
       const state = JSON.parse(raw);
+      const callbackStateId = crypto.randomUUID();
+      const callbackStateKey =
+        flow === "oauth"
+          ? `oauth_state:${callbackStateId}`
+          : `settings_state:${callbackStateId}`;
+
       await env.OAUTH_KV.put(
-        stateKey,
+        callbackStateKey,
         JSON.stringify({ ...state, provider: providerParam }),
         { expirationTtl: STATE_TTL }
       );
+      await env.OAUTH_KV.delete(stateKey);
 
       return Response.redirect(
         buildProviderAuthUrl(
           providerParam,
           providerClientId(env, providerParam),
-          stateId,
+          callbackStateId,
           callbackUrl(request)
         ),
         302

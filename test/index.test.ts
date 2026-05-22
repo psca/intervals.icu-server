@@ -80,8 +80,11 @@ describe("defaultHandler /login", () => {
     expect(res.status).toBe(400);
   });
 
-  it("stores GitHub provider in oauth state and redirects to GitHub", async () => {
+  it("creates a fresh provider-bound oauth callback state and redirects to GitHub", async () => {
     const env = makeEnv();
+    vi.stubGlobal("crypto", {
+      randomUUID: vi.fn().mockReturnValue("fresh-oauth-state"),
+    } as unknown as Crypto);
     env.OAUTH_KV.get.mockResolvedValue(JSON.stringify({
       oauthReqInfo: {
         clientId: "client123",
@@ -96,27 +99,58 @@ describe("defaultHandler /login", () => {
 
     expect(res.status).toBe(302);
     expect(res.headers.get("Location")).toContain("github.com/login/oauth/authorize");
+    expect(res.headers.get("Location")).toContain("state=fresh-oauth-state");
     expect(env.OAUTH_KV.put).toHaveBeenCalledWith(
-      "oauth_state:s1",
+      "oauth_state:fresh-oauth-state",
       expect.stringContaining('"provider":"github"'),
       expect.objectContaining({ expirationTtl: 600 })
     );
+    expect(env.OAUTH_KV.put).toHaveBeenCalledWith(
+      "oauth_state:fresh-oauth-state",
+      expect.stringContaining('"client123"'),
+      expect.objectContaining({ expirationTtl: 600 })
+    );
+    expect(env.OAUTH_KV.delete).toHaveBeenCalledWith("oauth_state:s1");
+    expect(env.OAUTH_KV.put).not.toHaveBeenCalledWith(
+      "oauth_state:s1",
+      expect.any(String),
+      expect.any(Object)
+    );
   });
 
-  it("stores Google provider in settings state and redirects to Google", async () => {
+  it("does not let a reused chooser state poison an already-issued callback state", async () => {
     const env = makeEnv();
-    env.OAUTH_KV.get.mockResolvedValue(JSON.stringify({ flow: "settings" }));
+    vi.stubGlobal("crypto", {
+      randomUUID: vi.fn().mockReturnValue("first-callback-state"),
+    } as unknown as Crypto);
+    env.OAUTH_KV.get
+      .mockResolvedValueOnce(JSON.stringify({ flow: "settings" }))
+      .mockResolvedValueOnce(null);
 
-    const req = new Request("https://mcp.example.com/login?flow=settings&state=s1&provider=google");
-    const res = await defaultHandler.fetch(req, env);
+    const firstReq = new Request(
+      "https://mcp.example.com/login?flow=settings&state=s1&provider=google"
+    );
+    const firstRes = await defaultHandler.fetch(firstReq, env);
 
-    expect(res.status).toBe(302);
-    expect(res.headers.get("Location")).toContain("accounts.google.com/o/oauth2/v2/auth");
-    expect(res.headers.get("Location")).toContain("client_id=goog_client");
+    expect(firstRes.status).toBe(302);
+    expect(firstRes.headers.get("Location")).toContain("state=first-callback-state");
     expect(env.OAUTH_KV.put).toHaveBeenCalledWith(
-      "settings_state:s1",
+      "settings_state:first-callback-state",
       expect.stringContaining('"provider":"google"'),
       expect.objectContaining({ expirationTtl: 600 })
+    );
+    expect(env.OAUTH_KV.delete).toHaveBeenCalledWith("settings_state:s1");
+
+    const secondReq = new Request(
+      "https://mcp.example.com/login?flow=settings&state=s1&provider=github"
+    );
+    const secondRes = await defaultHandler.fetch(secondReq, env);
+
+    expect(secondRes.status).toBe(400);
+    expect(env.OAUTH_KV.put).not.toHaveBeenCalledWith(
+      "settings_state:first-callback-state",
+      expect.stringContaining('"provider":"github"'),
+      expect.any(Object)
     );
   });
 });
