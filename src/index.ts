@@ -338,7 +338,7 @@ const defaultHandler = {
               <p class="subtitle">Enter your intervals.icu credentials to get started.</p>
               ${errorHtml}
               <form method="POST" action="/configure">
-                <input type="hidden" name="state" value="${stateId}">
+                <input type="hidden" name="state" value="${escapeHtml(stateId)}">
                 <div class="field">
                   <label for="athleteId">Athlete ID <span class="hint">(e.g. i12345)</span></label>
                   <input type="text" id="athleteId" name="athleteId" required autofocus>

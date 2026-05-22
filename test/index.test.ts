@@ -369,6 +369,24 @@ describe("defaultHandler /configure", () => {
     expect(body).toContain("apiKey");
   });
 
+  it("escapes configure state value in hidden input", async () => {
+    const env = makeEnv();
+    env.OAUTH_KV.get.mockResolvedValue(
+      JSON.stringify({
+        oauthReqInfo: { scope: [] },
+        identity: { provider: "github", subject: "12345", displayName: "testuser" },
+        accountId: "github:12345",
+      })
+    );
+
+    const req = new Request("https://mcp.example.com/configure?state=abc%22%3E%3Cscript%3E");
+    const res = await defaultHandler.fetch(req, env);
+    const body = await res.text();
+
+    expect(body).toContain('value="abc&quot;&gt;&lt;script&gt;"');
+    expect(body).not.toContain('value="abc"><script>');
+  });
+
   it("POST returns 400 when configure_state missing or expired", async () => {
     const env = makeEnv();
     env.OAUTH_KV.get.mockResolvedValue(null);
@@ -482,6 +500,34 @@ describe("defaultHandler /settings", () => {
     const body = await res.text();
     expect(body).toContain("i123");
     expect(body).toContain("••••••••");
+  });
+
+  it("escapes identity display and athlete ID in settings HTML", async () => {
+    const env = makeEnv();
+    env.OAUTH_KV.get
+      .mockResolvedValueOnce({
+        accountId: "github:sub1",
+        identity: {
+          provider: "github",
+          subject: "sub1",
+          displayName: "<script>alert(1)</script>",
+        },
+      })
+      .mockResolvedValueOnce({
+        athleteId: 'i123"><script>alert(2)</script>',
+        encryptedApiKey: "enc",
+        iv: "iv",
+      });
+
+    const req = new Request("https://mcp.example.com/settings", {
+      headers: { Cookie: "settings_session=mytoken" },
+    });
+    const res = await defaultHandler.fetch(req, env);
+    const body = await res.text();
+
+    expect(body).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
+    expect(body).toContain("i123&quot;&gt;&lt;script&gt;alert(2)&lt;/script&gt;");
+    expect(body).not.toContain("<script>alert");
   });
 
   it("GET /settings with legacy session payload renders provider choices", async () => {
