@@ -1,7 +1,15 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { IntervalsClient } from "../client.js";
-import { defaultDateRange, toolHandler } from "../utils.js";
+import { defaultDateRange } from "../utils.js";
+
+type AthleteRecord = Record<string, unknown>;
+
+type ToolTextResult = {
+  content: { type: "text"; text: string }[];
+  structuredContent?: Record<string, unknown>;
+  isError?: boolean;
+};
 
 const POWER_CURVE_DURATIONS: [number, string][] = [
   [1, "1s"], [5, "5s"], [10, "10s"], [30, "30s"],
@@ -13,6 +21,8 @@ const HR_CURVE_DURATIONS: [number, string][] = [
   [30, "30s"], [60, "1min"], [300, "5min"], [600, "10min"],
   [1200, "20min"], [1800, "30min"], [3600, "60min"],
 ];
+
+const genericObjectSchema = z.record(z.string(), z.unknown());
 
 function metersPerSecToMinPerKm(mps: number): string {
   if (!mps || mps <= 0) return "N/A";
@@ -57,72 +67,195 @@ function formatDuration(seconds: number): string {
   return `${m}m`;
 }
 
-export function registerAthleteTools(server: McpServer, client: IntervalsClient): void {
+function textResult(text: string, structuredContent: Record<string, unknown>): ToolTextResult {
+  return {
+    content: [{ type: "text", text }],
+    structuredContent,
+  };
+}
 
+function errorResult(errorLabel: string, error: unknown): ToolTextResult {
+  return {
+    content: [{ type: "text", text: `Error ${errorLabel}: ${error}` }],
+    isError: true,
+  };
+}
+
+async function withAthleteToolResult(
+  errorLabel: string,
+  fn: () => Promise<ToolTextResult>,
+): Promise<ToolTextResult> {
+  try {
+    return await fn();
+  } catch (error) {
+    return errorResult(errorLabel, error);
+  }
+}
+
+function distanceDisplay(meters: unknown): string | null {
+  if (typeof meters !== "number") return null;
+  return formatDistance(meters);
+}
+
+function normalizeGear(items: unknown): Record<string, unknown>[] {
+  if (!Array.isArray(items)) return [];
+  return items.map((item) => {
+    const gear = item as Record<string, unknown>;
+    return {
+      name: gear.name ?? null,
+      distance_meters: typeof gear.distance === "number" ? gear.distance : null,
+      distance_display: distanceDisplay(gear.distance),
+      activities: typeof gear.activities === "number" ? gear.activities : null,
+      time_seconds: typeof gear.time === "number" ? gear.time : null,
+      retired: Boolean(gear.retired),
+      type: gear.type ?? null,
+    };
+  });
+}
+
+function normalizeSportSettings(settings: unknown): Record<string, unknown>[] {
+  if (!Array.isArray(settings)) return [];
+  return settings.map((setting) => {
+    const sportSetting = setting as Record<string, unknown>;
+    return {
+      label: formatSportSettingLabel(sportSetting),
+      types: Array.isArray(sportSetting.types) ? sportSetting.types : [],
+      type: sportSetting.type ?? null,
+      ftp: sportSetting.ftp ?? null,
+      indoor_ftp: sportSetting.indoor_ftp ?? null,
+      lthr: sportSetting.lthr ?? null,
+      max_hr: sportSetting.max_hr ?? null,
+      threshold_pace_mps: sportSetting.threshold_pace ?? null,
+      threshold_pace_display: typeof sportSetting.threshold_pace === "number"
+        ? formatThresholdPace(
+          sportSetting.threshold_pace,
+          sportSetting.pace_units as string | undefined,
+        )
+        : null,
+      pace_units: sportSetting.pace_units ?? null,
+      power_zones: Array.isArray(sportSetting.power_zones) ? sportSetting.power_zones : [],
+      hr_zones: Array.isArray(sportSetting.hr_zones) ? sportSetting.hr_zones : [],
+    };
+  });
+}
+
+function normalizePowerCurve(curve: AthleteRecord): Record<string, unknown> {
+  const secs = curve.secs as number[] ?? [];
+  const watts = curve.watts as number[] ?? [];
+  const wkg = curve.watts_per_kg as number[] ?? [];
+  const bests = POWER_CURVE_DURATIONS.flatMap(([dur, label]) => {
+    const idx = secs.indexOf(dur);
+    if (idx === -1 || !watts[idx]) return [];
+    return [{
+      duration_seconds: dur,
+      label,
+      watts: watts[idx],
+      watts_per_kg: wkg[idx] ?? null,
+    }];
+  });
+
+  return {
+    label: curve.label ?? null,
+    start_date_local: curve.start_date_local ?? null,
+    end_date_local: curve.end_date_local ?? null,
+    bests,
+    vo2max_5m: curve.vo2max_5m ?? null,
+    raw_curve: curve,
+  };
+}
+
+function normalizePaceCurve(curve: AthleteRecord): Record<string, unknown> {
+  const models = curve.paceModels as { type: string; criticalSpeed: number; dPrime: number; r2: number }[] | undefined;
+  return {
+    label: curve.label ?? null,
+    start_date_local: curve.start_date_local ?? null,
+    end_date_local: curve.end_date_local ?? null,
+    pace_models: (models ?? []).map((model) => ({
+      type: model.type,
+      critical_speed_mps: model.criticalSpeed,
+      critical_speed_display: metersPerSecToMinPerKm(model.criticalSpeed),
+      d_prime_meters: model.dPrime,
+      r2: model.r2,
+    })),
+    raw_curve: curve,
+  };
+}
+
+function normalizeHrCurve(curve: AthleteRecord): Record<string, unknown> {
+  const secs = curve.secs as number[] ?? [];
+  const values = curve.values as number[] ?? [];
+  const bests = HR_CURVE_DURATIONS.flatMap(([dur, label]) => {
+    const idx = secs.indexOf(dur);
+    if (idx === -1 || !values[idx]) return [];
+    return [{
+      duration_seconds: dur,
+      label,
+      bpm: values[idx],
+    }];
+  });
+
+  return {
+    label: curve.label ?? null,
+    start_date_local: curve.start_date_local ?? null,
+    end_date_local: curve.end_date_local ?? null,
+    bests,
+    raw_curve: curve,
+  };
+}
+
+const athleteProfileSchema = {
+  full_name: z.string(),
+  location: z.string().nullable(),
+  weight_kg: z.number().nullable(),
+  resting_hr_bpm: z.number().nullable(),
+  date_of_birth: z.string().nullable(),
+  sport_settings: z.array(z.object({
+    label: z.string(),
+    types: z.array(z.unknown()),
+    type: z.unknown().nullable(),
+    ftp: z.unknown().nullable(),
+    indoor_ftp: z.unknown().nullable(),
+    lthr: z.unknown().nullable(),
+    max_hr: z.unknown().nullable(),
+    threshold_pace_mps: z.unknown().nullable(),
+    threshold_pace_display: z.string().nullable(),
+    pace_units: z.unknown().nullable(),
+    power_zones: z.array(z.unknown()),
+    hr_zones: z.array(z.unknown()),
+  })),
+  bikes: z.array(genericObjectSchema),
+  shoes: z.array(genericObjectSchema),
+};
+
+export function registerAthleteTools(server: McpServer, client: IntervalsClient): void {
   server.registerTool(
     "get_athlete_profile",
     {
       description: "Get the athlete's current fitness thresholds and zones: FTP, LTHR, max HR, power zones, HR zones, threshold pace, and weight. Use when the user asks about their fitness level, training zones, thresholds, or capabilities — or when interpreting activity data requires knowing their baseline.",
       inputSchema: {},
+      outputSchema: {
+        athlete_profile: z.object(athleteProfileSchema),
+      },
     },
     async () => {
-      return toolHandler(async () => {
-        const athlete = await client.get<Record<string, unknown>>(`/athlete/${client.athleteId}`);
+      return withAthleteToolResult("fetching athlete profile", async () => {
+        const athlete = await client.get<AthleteRecord>(`/athlete/${client.athleteId}`);
 
-        let text = `Athlete Profile: ${athlete.firstname ?? ""} ${athlete.lastname ?? ""}`.trim();
-        if (athlete.city || athlete.country) {
-          text += ` (${[athlete.city, athlete.country].filter(Boolean).join(", ")})`;
-        }
-        text += "\n\n";
-
-        text += `Weight: ${athlete.icu_weight ?? "N/A"} kg\n`;
-        text += `Resting HR: ${athlete.icu_resting_hr ?? "N/A"} bpm\n`;
-        if (athlete.icu_date_of_birth) text += `Date of Birth: ${athlete.icu_date_of_birth}\n`;
-
-        const sportSettings = athlete.sportSettings as Record<string, unknown>[] | undefined;
-        if (sportSettings?.length) {
-          text += "\nSport Settings:\n";
-          for (const s of sportSettings) {
-            text += `\n  ${formatSportSettingLabel(s)}:\n`;
-            if (s.ftp) text += `    FTP: ${s.ftp}w\n`;
-            if (s.indoor_ftp && s.indoor_ftp !== s.ftp) text += `    Indoor FTP: ${s.indoor_ftp}w\n`;
-            if (s.lthr) text += `    LTHR: ${s.lthr} bpm\n`;
-            if (s.max_hr) text += `    Max HR: ${s.max_hr} bpm\n`;
-            if (s.threshold_pace) {
-              text += `    Threshold Pace: ${formatThresholdPace(
-                s.threshold_pace as number,
-                s.pace_units as string | undefined,
-              )}\n`;
-            }
-            const powerZones = s.power_zones as number[] | undefined;
-            if (powerZones?.length) {
-              text += `    Power Zones (W): ${powerZones.join(", ")}\n`;
-            }
-            const hrZones = s.hr_zones as number[] | undefined;
-            if (hrZones?.length) {
-              text += `    HR Zones (bpm): ${hrZones.join(", ")}\n`;
-            }
-          }
-        }
-
-        const bikes = athlete.bikes as { name: string; distance: number }[] | undefined;
-        const shoes = athlete.shoes as { name: string; distance: number }[] | undefined;
-
-        if (bikes?.length) {
-          text += "\nBikes:\n";
-          for (const b of bikes) {
-            text += `  ${b.name}: ${formatDistance(b.distance)}\n`;
-          }
-        }
-        if (shoes?.length) {
-          text += "\nShoes:\n";
-          for (const s of shoes) {
-            text += `  ${s.name}: ${formatDistance(s.distance)}\n`;
-          }
-        }
-
-        return text;
-      }, "fetching athlete profile");
+        const fullName = [athlete.firstname, athlete.lastname].filter(Boolean).join(" ").trim();
+        const locationParts = [athlete.city, athlete.country].filter(Boolean).map(String);
+        return textResult("Returned athlete profile.", {
+          athlete_profile: {
+            full_name: fullName,
+            location: locationParts.length ? locationParts.join(", ") : null,
+            weight_kg: typeof athlete.icu_weight === "number" ? athlete.icu_weight : null,
+            resting_hr_bpm: typeof athlete.icu_resting_hr === "number" ? athlete.icu_resting_hr : null,
+            date_of_birth: typeof athlete.icu_date_of_birth === "string" ? athlete.icu_date_of_birth : null,
+            sport_settings: normalizeSportSettings(athlete.sportSettings),
+            bikes: normalizeGear(athlete.bikes),
+            shoes: normalizeGear(athlete.shoes),
+          },
+        });
+      });
     }
   );
 
@@ -134,28 +267,24 @@ export function registerAthleteTools(server: McpServer, client: IntervalsClient)
         query: z.string().describe("Search query — matches activity name or tag"),
         limit: z.number().int().optional().default(10).describe("Max results to return"),
       },
+      outputSchema: {
+        query: z.string(),
+        activities: z.array(genericObjectSchema),
+        count: z.number().int(),
+      },
     },
     async ({ query, limit }) => {
-      return toolHandler(async () => {
-        const results = await client.get<Record<string, unknown>[]>(
+      return withAthleteToolResult("searching activities", async () => {
+        const results = await client.get<AthleteRecord[]>(
           `/athlete/${client.athleteId}/activities/search`,
           { q: query, limit: String(limit) }
         );
-        if (!results?.length) return `No activities found matching "${query}".`;
-
-        let text = `Search results for "${query}":\n\n`;
-        for (const a of results) {
-          text += `ID: ${a.id}\n`;
-          text += `  Name: ${a.name ?? "Unnamed"}\n`;
-          text += `  Date: ${(a.start_date_local as string)?.slice(0, 10) ?? "N/A"}\n`;
-          text += `  Type: ${a.type ?? "N/A"}\n`;
-          if (a.distance) text += `  Distance: ${formatDistance(a.distance as number)}\n`;
-          if (a.moving_time) text += `  Duration: ${formatDuration(a.moving_time as number)}\n`;
-          if (a.tags) text += `  Tags: ${a.tags}\n`;
-          text += "\n";
+        if (!results?.length) {
+          return textResult(`No activities found matching "${query}".`, { query, activities: [], count: 0 });
         }
-        return text;
-      }, "searching activities");
+
+        return textResult(`Returned ${results.length} activities matching "${query}".`, { query, activities: results, count: results.length });
+      });
     }
   );
 
@@ -168,34 +297,27 @@ export function registerAthleteTools(server: McpServer, client: IntervalsClient)
         start_date: z.string().optional().describe("Start date YYYY-MM-DD (default: 30 days ago)"),
         end_date: z.string().optional().describe("End date YYYY-MM-DD (default: today)"),
       },
+      outputSchema: {
+        activity_type: z.string(),
+        curves: z.array(genericObjectSchema),
+        count: z.number().int(),
+      },
     },
     async ({ activity_type, start_date, end_date }) => {
       const { start, end } = defaultDateRange();
-      return toolHandler(async () => {
-        const data = await client.get<{ list: Record<string, unknown>[] }>(
+      return withAthleteToolResult("fetching power curves", async () => {
+        const data = await client.get<{ list: AthleteRecord[] }>(
           `/athlete/${client.athleteId}/power-curves`,
           { type: activity_type, oldest: start_date ?? start, newest: end_date ?? end }
         );
         const curves = data?.list ?? [];
-        if (!curves.length) return "No power curve data found.";
+        if (!curves.length) return textResult("No power curve data found.", { activity_type, curves: [], count: 0 });
 
-        let text = `Power Curves (${activity_type}):\n`;
-        for (const curve of curves) {
-          text += `\n${curve.label} (${(curve.start_date_local as string)?.slice(0, 10)} – ${(curve.end_date_local as string)?.slice(0, 10)}):\n`;
-          const secs = curve.secs as number[] ?? [];
-          const watts = curve.watts as number[] ?? [];
-          const wkg = curve.watts_per_kg as number[] ?? [];
-          for (const [dur, label] of POWER_CURVE_DURATIONS) {
-            const idx = secs.indexOf(dur);
-            if (idx !== -1 && watts[idx]) {
-              const wkgVal = wkg[idx] ? ` (${wkg[idx].toFixed(2)} w/kg)` : "";
-              text += `  ${label.padEnd(6)}: ${watts[idx]}w${wkgVal}\n`;
-            }
-          }
-          if (curve.vo2max_5m) text += `  VO2max (5min estimate): ${(curve.vo2max_5m as number).toFixed(1)}\n`;
-        }
-        return text;
-      }, "fetching power curves");
+        const normalizedCurves = curves.map((curve) => {
+          return normalizePowerCurve(curve);
+        });
+        return textResult(`Returned ${normalizedCurves.length} power curves for ${activity_type}.`, { activity_type, curves: normalizedCurves, count: normalizedCurves.length });
+      });
     }
   );
 
@@ -208,32 +330,27 @@ export function registerAthleteTools(server: McpServer, client: IntervalsClient)
         start_date: z.string().optional().describe("Start date YYYY-MM-DD (default: 30 days ago)"),
         end_date: z.string().optional().describe("End date YYYY-MM-DD (default: today)"),
       },
+      outputSchema: {
+        activity_type: z.string(),
+        curves: z.array(genericObjectSchema),
+        count: z.number().int(),
+      },
     },
     async ({ activity_type, start_date, end_date }) => {
       const { start, end } = defaultDateRange();
-      return toolHandler(async () => {
-        const data = await client.get<{ list: Record<string, unknown>[] }>(
+      return withAthleteToolResult("fetching pace curves", async () => {
+        const data = await client.get<{ list: AthleteRecord[] }>(
           `/athlete/${client.athleteId}/pace-curves`,
           { type: activity_type, oldest: start_date ?? start, newest: end_date ?? end }
         );
         const curves = data?.list ?? [];
-        if (!curves.length) return "No pace curve data found.";
+        if (!curves.length) return textResult("No pace curve data found.", { activity_type, curves: [], count: 0 });
 
-        let text = `Pace Curves (${activity_type}):\n`;
-        for (const curve of curves) {
-          text += `\n${curve.label} (${(curve.start_date_local as string)?.slice(0, 10)} – ${(curve.end_date_local as string)?.slice(0, 10)}):\n`;
-          const models = curve.paceModels as { type: string; criticalSpeed: number; dPrime: number; r2: number }[] | undefined;
-          if (models?.length) {
-            for (const m of models) {
-              text += `  Model (${m.type}):\n`;
-              text += `    Critical Speed: ${metersPerSecToMinPerKm(m.criticalSpeed)} (${m.criticalSpeed.toFixed(3)} m/s)\n`;
-              text += `    D': ${m.dPrime.toFixed(1)}m\n`;
-              if (m.r2) text += `    R²: ${m.r2.toFixed(3)}\n`;
-            }
-          }
-        }
-        return text;
-      }, "fetching pace curves");
+        const normalizedCurves = curves.map((curve) => {
+          return normalizePaceCurve(curve);
+        });
+        return textResult(`Returned ${normalizedCurves.length} pace curves for ${activity_type}.`, { activity_type, curves: normalizedCurves, count: normalizedCurves.length });
+      });
     }
   );
 
@@ -246,31 +363,27 @@ export function registerAthleteTools(server: McpServer, client: IntervalsClient)
         start_date: z.string().optional().describe("Start date YYYY-MM-DD (default: 30 days ago)"),
         end_date: z.string().optional().describe("End date YYYY-MM-DD (default: today)"),
       },
+      outputSchema: {
+        activity_type: z.string(),
+        curves: z.array(genericObjectSchema),
+        count: z.number().int(),
+      },
     },
     async ({ activity_type, start_date, end_date }) => {
       const { start, end } = defaultDateRange();
-      return toolHandler(async () => {
-        const data = await client.get<{ list: Record<string, unknown>[] }>(
+      return withAthleteToolResult("fetching HR curves", async () => {
+        const data = await client.get<{ list: AthleteRecord[] }>(
           `/athlete/${client.athleteId}/hr-curves`,
           { type: activity_type, oldest: start_date ?? start, newest: end_date ?? end }
         );
         const curves = data?.list ?? [];
-        if (!curves.length) return "No HR curve data found.";
+        if (!curves.length) return textResult("No HR curve data found.", { activity_type, curves: [], count: 0 });
 
-        let text = `HR Curves (${activity_type}):\n`;
-        for (const curve of curves) {
-          text += `\n${curve.label} (${(curve.start_date_local as string)?.slice(0, 10)} – ${(curve.end_date_local as string)?.slice(0, 10)}):\n`;
-          const secs = curve.secs as number[] ?? [];
-          const values = curve.values as number[] ?? [];
-          for (const [dur, label] of HR_CURVE_DURATIONS) {
-            const idx = secs.indexOf(dur);
-            if (idx !== -1 && values[idx]) {
-              text += `  ${label.padEnd(6)}: ${values[idx]} bpm\n`;
-            }
-          }
-        }
-        return text;
-      }, "fetching HR curves");
+        const normalizedCurves = curves.map((curve) => {
+          return normalizeHrCurve(curve);
+        });
+        return textResult(`Returned ${normalizedCurves.length} HR curves for ${activity_type}.`, { activity_type, curves: normalizedCurves, count: normalizedCurves.length });
+      });
     }
   );
 
@@ -279,43 +392,39 @@ export function registerAthleteTools(server: McpServer, client: IntervalsClient)
     {
       description: "List the athlete's gear (bikes, shoes, equipment) with usage statistics.",
       inputSchema: {},
+      outputSchema: {
+        gear: z.array(genericObjectSchema),
+        active_gear_by_type: genericObjectSchema,
+        retired_gear: z.array(genericObjectSchema),
+      },
     },
     async () => {
-      return toolHandler(async () => {
-        const gear = await client.get<Record<string, unknown>[]>(`/athlete/${client.athleteId}/gear`);
-        if (!gear?.length) return "No gear found.";
+      return withAthleteToolResult("fetching gear", async () => {
+        const gear = await client.get<AthleteRecord[]>(`/athlete/${client.athleteId}/gear`);
+        if (!gear?.length) {
+          return textResult("No gear found.", { gear: [], active_gear_by_type: {}, retired_gear: [] });
+        }
 
-        const byType: Record<string, typeof gear> = {};
+        const byType: Record<string, AthleteRecord[]> = {};
         for (const item of gear) {
           const type = (item.type as string) ?? "Other";
           (byType[type] ??= []).push(item);
         }
 
-        let text = "Gear:\n";
-        for (const [type, items] of Object.entries(byType)) {
-          text += `\n${type}:\n`;
-          for (const item of items) {
-            if (item.retired) continue;
-            text += `  ${item.name}`;
-            if (item.distance) text += ` — ${formatDistance(item.distance as number)}`;
-            if (item.activities) text += ` over ${item.activities} activities`;
-            if (item.time) text += ` (${formatDuration(item.time as number)})`;
-            text += "\n";
-          }
-        }
+        const retired = gear.filter(item => item.retired);
 
-        // Show retired gear separately
-        const retired = gear.filter(g => g.retired);
-        if (retired.length) {
-          text += "\nRetired:\n";
-          for (const item of retired) {
-            text += `  ${item.name} (${item.type}) — ${formatDistance(item.distance as number)}\n`;
-          }
-        }
+        const normalizedGear = normalizeGear(gear);
+        const activeGearByType = Object.fromEntries(
+          Object.entries(byType).map(([type, items]) => [type, normalizeGear(items.filter(item => !item.retired))])
+        );
+        const retiredGear = normalizeGear(retired);
 
-        return text;
-      }, "fetching gear");
+        return textResult(`Returned ${normalizedGear.length} gear items.`, {
+          gear: normalizedGear,
+          active_gear_by_type: activeGearByType,
+          retired_gear: retiredGear,
+        });
+      });
     }
   );
-
-} // end registerAthleteTools
+}

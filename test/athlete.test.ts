@@ -51,21 +51,39 @@ describe("registerAthleteTools", () => {
     const result = await tools.get_athlete_profile.handler();
 
     expect(client.get).toHaveBeenCalledWith("/athlete/i123");
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       content: [
         {
           type: "text",
-          text: expect.stringContaining("Ride, VirtualRide"),
+          text: "Returned athlete profile.",
         },
       ],
-    });
-    expect(result).toEqual({
-      content: [
-        {
-          type: "text",
-          text: expect.stringContaining("Threshold Pace: 1:55/100m"),
+      structuredContent: {
+        athlete_profile: {
+          full_name: "Alex Runner",
+          location: "Singapore, Singapore",
+          weight_kg: 74.4,
+          resting_hr_bpm: 44,
+          sport_settings: [
+            expect.objectContaining({
+              label: "Ride, VirtualRide",
+              ftp: 250,
+              lthr: 170,
+              max_hr: 189,
+              power_zones: [55, 75, 90],
+              hr_zones: [136, 151, 158],
+            }),
+            expect.objectContaining({
+              label: "Swim, OpenWaterSwim",
+              threshold_pace_mps: 0.8695652,
+              threshold_pace_display: "1:55/100m",
+              pace_units: "SECS_100M",
+            }),
+          ],
+          bikes: [expect.objectContaining({ name: "Race Bike", distance_meters: 123456, distance_display: "123.5km" })],
+          shoes: [expect.objectContaining({ name: "Tempo Shoes", distance_meters: 54321, distance_display: "54.3km" })],
         },
-      ],
+      },
     });
   });
 
@@ -89,13 +107,24 @@ describe("registerAthleteTools", () => {
       "/athlete/i123/activities/search",
       { q: "tempo", limit: "1" },
     );
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       content: [
         {
           type: "text",
-          text: expect.stringContaining('Search results for "tempo"'),
+          text: 'Returned 1 activities matching "tempo".',
         },
       ],
+      structuredContent: {
+        query: "tempo",
+        activities: [
+          expect.objectContaining({
+            id: "i999",
+            name: "Tempo Run",
+            type: "Run",
+          }),
+        ],
+        count: 1,
+      },
     });
   });
 
@@ -121,13 +150,144 @@ describe("registerAthleteTools", () => {
       "/athlete/i123/power-curves",
       expect.objectContaining({ type: "Ride" }),
     );
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       content: [
         {
           type: "text",
-          text: expect.stringContaining("5min  : 222w (2.98 w/kg)"),
+          text: "Returned 1 power curves for Ride.",
         },
       ],
+      structuredContent: {
+        activity_type: "Ride",
+        curves: [
+          expect.objectContaining({
+            label: "1 year",
+            bests: expect.arrayContaining([
+              expect.objectContaining({ duration_seconds: 1, label: "1s", watts: 1030 }),
+              expect.objectContaining({ duration_seconds: 300, label: "5min", watts: 222, watts_per_kg: 2.98 }),
+            ]),
+            vo2max_5m: 43.18,
+          }),
+        ],
+        count: 1,
+      },
+    });
+  });
+
+  it("returns structured pace curve models", async () => {
+    const { client, tools } = makeServerWithClient();
+    client.get.mockResolvedValueOnce({
+      list: [
+        {
+          label: "90 days",
+          start_date_local: "2026-01-01T00:00:00",
+          end_date_local: "2026-03-31T23:59:59",
+          paceModels: [
+            { type: "critical-speed", criticalSpeed: 4.2, dPrime: 180, r2: 0.98 },
+          ],
+        },
+      ],
+    });
+
+    const result = await tools.get_pace_curves.handler({ activity_type: "Run" });
+
+    expect(result).toMatchObject({
+      content: [
+        {
+          type: "text",
+          text: "Returned 1 pace curves for Run.",
+        },
+      ],
+      structuredContent: {
+        activity_type: "Run",
+        curves: [
+          expect.objectContaining({
+            label: "90 days",
+            pace_models: [
+              expect.objectContaining({
+                type: "critical-speed",
+                critical_speed_mps: 4.2,
+                critical_speed_display: "3:58/km",
+                d_prime_meters: 180,
+                r2: 0.98,
+              }),
+            ],
+          }),
+        ],
+        count: 1,
+      },
+    });
+  });
+
+  it("returns structured hr curve bests", async () => {
+    const { client, tools } = makeServerWithClient();
+    client.get.mockResolvedValueOnce({
+      list: [
+        {
+          label: "42 days",
+          start_date_local: "2026-02-01T00:00:00",
+          end_date_local: "2026-03-14T23:59:59",
+          secs: [30, 300],
+          values: [182, 176],
+        },
+      ],
+    });
+
+    const result = await tools.get_hr_curves.handler({ activity_type: "Run" });
+
+    expect(result).toMatchObject({
+      content: [
+        {
+          type: "text",
+          text: "Returned 1 HR curves for Run.",
+        },
+      ],
+      structuredContent: {
+        activity_type: "Run",
+        curves: [
+          expect.objectContaining({
+            label: "42 days",
+            bests: expect.arrayContaining([
+              expect.objectContaining({ duration_seconds: 30, label: "30s", bpm: 182 }),
+              expect.objectContaining({ duration_seconds: 300, label: "5min", bpm: 176 }),
+            ]),
+          }),
+        ],
+        count: 1,
+      },
+    });
+  });
+
+  it("returns structured gear grouped by type", async () => {
+    const { client, tools } = makeServerWithClient();
+    client.get.mockResolvedValueOnce([
+      { name: "Race Bike", type: "Bike", distance: 123456, activities: 42, time: 54000, retired: false },
+      { name: "Tempo Shoes", type: "Shoes", distance: 54321, activities: 30, time: 18000, retired: false },
+      { name: "Old Bike", type: "Bike", distance: 10000, retired: true },
+    ]);
+
+    const result = await tools.get_gear.handler();
+
+    expect(result).toMatchObject({
+      content: [
+        {
+          type: "text",
+          text: "Returned 3 gear items.",
+        },
+      ],
+      structuredContent: {
+        gear: expect.arrayContaining([
+          expect.objectContaining({ name: "Race Bike", type: "Bike", retired: false }),
+          expect.objectContaining({ name: "Old Bike", type: "Bike", retired: true }),
+        ]),
+        active_gear_by_type: {
+          Bike: expect.any(Array),
+          Shoes: expect.any(Array),
+        },
+        retired_gear: [
+          expect.objectContaining({ name: "Old Bike", retired: true }),
+        ],
+      },
     });
   });
 });
