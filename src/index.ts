@@ -102,6 +102,10 @@ function escapeHtml(value: string): string {
     .replaceAll("'", "&#39;");
 }
 
+function helpLink(href = "/help", label = "Help"): string {
+  return `<a class="page-link" href="${href}">${escapeHtml(label)}</a>`;
+}
+
 function identityDisplay(identity: AuthIdentity): string {
   if (identity.provider === "google" && identity.emailVerified && identity.email) {
     return identity.email;
@@ -179,10 +183,67 @@ function renderProviderChoicePage(flow: "oauth" | "settings", stateId: string): 
       <div class="card">
         <h1>Sign in</h1>
         <p class="subtitle">Choose how you want to continue.</p>
+        <div class="page-actions">${helpLink()}</div>
         <div class="provider-actions">
           <a class="btn-provider" href="/login?flow=${flow}&state=${stateId}&provider=github">Continue with ${providerLabel("github")}</a>
           <a class="btn-provider" href="/login?flow=${flow}&state=${stateId}&provider=google">Continue with ${providerLabel("google")}</a>
         </div>
+      </div>
+    </body></html>`,
+    {
+      headers: {
+        "Content-Type": "text/html; charset=utf-8",
+        "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'",
+      },
+    }
+  );
+}
+
+function renderHelpPage(origin: string): Response {
+  const mcpUrl = escapeHtml(`${origin}/mcp`);
+
+  return new Response(
+    `<!DOCTYPE html><html><head>
+      <meta charset="utf-8">
+      <title>Help</title>
+      <style>${PAGE_CSS}</style>
+    </head><body>
+      <div class="card docs-card">
+        <h1>Help</h1>
+        <p class="subtitle">Use this server with your MCP client and your intervals.icu account.</p>
+        <div class="page-actions">${helpLink("/settings", "Settings")}</div>
+        <nav class="section-nav" aria-label="Help sections">
+          <a href="#chatgpt">ChatGPT</a>
+          <a href="#claude">Claude</a>
+          <a href="#intervals-icu">intervals.icu</a>
+        </nav>
+
+        <section class="doc-section" id="chatgpt">
+          <h2>ChatGPT</h2>
+          <ol>
+            <li>Open your MCP server settings in ChatGPT.</li>
+            <li>Add this server URL: <code>${mcpUrl}</code>.</li>
+            <li>Finish authorization in the browser when prompted.</li>
+          </ol>
+        </section>
+
+        <section class="doc-section" id="claude">
+          <h2>Claude</h2>
+          <ol>
+            <li>Add a new remote MCP server in Claude.</li>
+            <li>Use <code>${mcpUrl}</code> as the server URL.</li>
+            <li>Complete the sign-in flow and return to Claude.</li>
+          </ol>
+        </section>
+
+        <section class="doc-section" id="intervals-icu">
+          <h2>intervals.icu</h2>
+          <ol>
+            <li>Open ${helpLink("/settings", "Settings")} and sign in with GitHub or Google.</li>
+            <li>Enter your intervals.icu athlete ID and API key.</li>
+            <li>Save the credentials, then reconnect your MCP client if needed.</li>
+          </ol>
+        </section>
       </div>
     </body></html>`,
     {
@@ -199,6 +260,10 @@ function renderProviderChoicePage(flow: "oauth" | "settings", stateId: string): 
 const defaultHandler = {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
+
+    if (url.pathname === "/help") {
+      return renderHelpPage(url.origin);
+    }
 
     if (url.pathname === "/authorize") {
       let oauthReqInfo;
@@ -365,6 +430,7 @@ const defaultHandler = {
             <div class="card">
               <h1>Connect your intervals.icu account</h1>
               <p class="subtitle">Enter your intervals.icu credentials to get started.</p>
+              <div class="page-actions">${helpLink("/help#intervals-icu")}</div>
               ${errorHtml}
               <form method="POST" action="/configure">
                 <input type="hidden" name="state" value="${escapeHtml(stateId)}">
@@ -480,6 +546,7 @@ const defaultHandler = {
           <div class="card">
             <h1>intervals.icu Settings</h1>
             <p class="subtitle">Signed in with ${providerLabel(session.identity.provider)} as <strong>${escapeHtml(identityDisplay(session.identity))}</strong></p>
+            <div class="page-actions">${helpLink()}</div>
             <form method="POST" action="/settings/save">
               <div class="field">
                 <label for="athleteId">Athlete ID</label>

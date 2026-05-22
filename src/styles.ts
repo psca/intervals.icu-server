@@ -47,5 +47,27 @@ export const PAGE_CSS = `
     font-weight: 500; text-align: center; background: #fff;
   }
   .btn-provider:hover { background: #f9fafb; border-color: #9ca3af; }
+  .page-actions { margin: 0 0 20px; }
+  .page-link {
+    display: inline-block; color: #2563eb; text-decoration: none;
+    font-size: 14px; font-weight: 500;
+  }
+  .page-link:hover { text-decoration: underline; }
+  .docs-card { max-width: 680px; }
+  .section-nav {
+    display: flex; flex-wrap: wrap; gap: 12px;
+    margin: 0 0 28px; padding-bottom: 16px; border-bottom: 1px solid #f0f0f0;
+  }
+  .section-nav a { text-decoration: none; font-size: 14px; font-weight: 500; }
+  .section-nav a:hover { text-decoration: underline; }
+  .doc-section { margin-top: 28px; }
+  .doc-section ol { margin: 12px 0 0 20px; }
+  .doc-section li + li { margin-top: 8px; }
+  code {
+    display: inline-block; padding: 2px 6px; border-radius: 4px;
+    background: #f3f4f6; color: #111827; font-size: 13px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    overflow-wrap: anywhere;
+  }
   a { color: #2563eb; }
 `;
