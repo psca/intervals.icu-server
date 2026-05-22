@@ -17,6 +17,11 @@ function makeServerWithClient() {
   return { client, tools };
 }
 
+function expectTextToMirrorStructuredContent(result: { content: { type: "text"; text: string }[]; structuredContent: unknown }) {
+  expect(result.content[0]?.type).toBe("text");
+  expect(JSON.parse(result.content[0]?.text ?? "")).toEqual(result.structuredContent);
+}
+
 describe("registerWellnessTools", () => {
   it("returns structured wellness entries with coach-relevant metrics", async () => {
     const { client, tools } = makeServerWithClient();
@@ -51,13 +56,8 @@ describe("registerWellnessTools", () => {
       "/athlete/i123/wellness",
       { oldest: "2026-05-01", newest: "2026-05-21" },
     );
+    expectTextToMirrorStructuredContent(result as never);
     expect(result).toMatchObject({
-      content: [
-        {
-          type: "text",
-          text: "Returned 1 wellness entries.",
-        },
-      ],
       structuredContent: {
         entries: [
           expect.objectContaining({

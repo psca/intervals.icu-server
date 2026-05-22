@@ -1,32 +1,13 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { IntervalsClient } from "../client.js";
+import { errorResult, textResult, type ToolTextResult } from "./result.js";
 
 type EventRecord = Record<string, unknown>;
-
-type ToolTextResult = {
-  content: { type: "text"; text: string }[];
-  structuredContent?: Record<string, unknown>;
-  isError?: boolean;
-};
 
 const eventObjectSchema = z.record(z.string(), z.unknown());
 
 const targetMetricSchema = z.enum(["AUTO", "POWER", "HR", "PACE"]);
-
-function textResult(text: string, structuredContent: Record<string, unknown>): ToolTextResult {
-  return {
-    content: [{ type: "text", text }],
-    structuredContent,
-  };
-}
-
-function errorResult(errorLabel: string, error: unknown): ToolTextResult {
-  return {
-    content: [{ type: "text", text: `Error ${errorLabel}: ${error}` }],
-    isError: true,
-  };
-}
 
 function stripUndefinedFields(value: EventRecord): EventRecord {
   return Object.fromEntries(Object.entries(value).filter(([, fieldValue]) => fieldValue !== undefined));
@@ -66,9 +47,9 @@ export function registerEventTools(server: McpServer, client: IntervalsClient): 
           { oldest: start_date ?? today, newest: end_date ?? future }
         );
         if (!events?.length) {
-          return textResult("No events found in the specified date range.", { events: [], count: 0 });
+          return textResult({ events: [], count: 0 });
         }
-        return textResult(`Returned ${events.length} events.`, { events, count: events.length });
+        return textResult({ events, count: events.length });
       });
     }
   );
@@ -89,7 +70,7 @@ export function registerEventTools(server: McpServer, client: IntervalsClient): 
         const event = await client.get<EventRecord>(
           `/athlete/${client.athleteId}/event/${event_id}`
         );
-        return textResult("Returned event details.", { event });
+        return textResult({ event });
       });
     }
   );
@@ -109,7 +90,7 @@ export function registerEventTools(server: McpServer, client: IntervalsClient): 
     async ({ event_id }) => {
       return withEventToolResult("deleting event", async () => {
         await client.delete(`/athlete/${client.athleteId}/events/${event_id}`);
-        return textResult("Deleted event.", { event_id, deleted: true });
+        return textResult({ event_id, deleted: true });
       });
     }
   );
@@ -135,7 +116,7 @@ export function registerEventTools(server: McpServer, client: IntervalsClient): 
           { oldest: start_date, newest: end_date }
         );
         if (!events?.length) {
-          return textResult("No events found in the specified date range.", {
+          return textResult({
             deleted_count: 0,
             failed_event_ids: [],
             truncation_warning: null,
@@ -158,12 +139,7 @@ export function registerEventTools(server: McpServer, client: IntervalsClient): 
           }
         }));
 
-        let text = failed.length
-          ? `Deleted ${deleted} events; ${failed.length} failed.`
-          : `Deleted ${deleted} events.`;
-        if (truncationWarning) text += " Results may be truncated.";
-
-        return textResult(text, {
+        return textResult({
           deleted_count: deleted,
           failed_event_ids: failed,
           truncation_warning: truncationWarning,
@@ -304,7 +280,7 @@ export function registerEventTools(server: McpServer, client: IntervalsClient): 
           const event = await client.put<EventRecord>(
             `/athlete/${client.athleteId}/events/${event_id}`, eventData
           );
-          return textResult("Event updated.", {
+          return textResult({
             action: "updated",
             event,
           });
@@ -313,7 +289,7 @@ export function registerEventTools(server: McpServer, client: IntervalsClient): 
         const event = await client.post<EventRecord>(
           `/athlete/${client.athleteId}/events`, eventData
         );
-        return textResult("Event created.", {
+        return textResult({
           action: "created",
           event,
         });

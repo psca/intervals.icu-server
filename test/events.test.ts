@@ -21,6 +21,11 @@ async function callTool(server: any, toolName: string, args: Record<string, unkn
   return tool.handler(args, {});
 }
 
+function expectTextToMirrorStructuredContent(result: { content: { type: "text"; text: string }[]; structuredContent: unknown }) {
+  expect(result.content[0]?.type).toBe("text");
+  expect(JSON.parse(result.content[0]?.text ?? "")).toEqual(result.structuredContent);
+}
+
 describe("event tools", () => {
   afterEach(() => vi.unstubAllGlobals());
 
@@ -63,7 +68,7 @@ describe("event tools", () => {
     expect(requestBody).toContain("\"load_target\":72");
     expect(requestBody).toContain("\"indoor\":true");
     expect(requestBody).toContain("\"athlete_cannot_edit\":true");
-    expect(result.content[0].text).toBe("Event created.");
+    expectTextToMirrorStructuredContent(result as never);
     expect(result.structuredContent.action).toBe("created");
     expect(result.structuredContent.event.type).toBe("VirtualRide");
   });
@@ -103,7 +108,7 @@ describe("event tools", () => {
     const server = await createStdioServer("test-key", "i123");
     const result = await callTool(server, "get_events", { start_date: "2026-06-01", end_date: "2026-06-07" });
 
-    expect(result.content[0].text).toBe("Returned 1 events.");
+    expectTextToMirrorStructuredContent(result as never);
     expect(result.structuredContent.events).toHaveLength(1);
     expect(result.structuredContent.events[0].id).toBe("e1");
   });
@@ -126,7 +131,7 @@ describe("event tools", () => {
     const server = await createStdioServer("test-key", "i123");
     const result = await callTool(server, "delete_events_by_date_range", { start_date: "2025-01-01", end_date: "2025-01-31" });
 
-    expect(result.content[0].text).toBe("No events found in the specified date range.");
+    expectTextToMirrorStructuredContent(result as never);
     expect(result.structuredContent.deleted_count).toBe(0);
     expect(result.structuredContent.failed_event_ids).toEqual([]);
   });
@@ -164,7 +169,7 @@ describe("event tools", () => {
     const server = await createStdioServer("test-key", "i123");
     const result = await callTool(server, "delete_events_by_date_range", { start_date: "2025-01-01", end_date: "2025-01-31" });
 
-    expect(result.content[0].text).toBe("Deleted 2 events; 1 failed.");
+    expectTextToMirrorStructuredContent(result as never);
     expect(result.structuredContent.deleted_count).toBe(2);
     expect(result.structuredContent.failed_event_ids).toEqual(["e2"]);
   });
@@ -192,7 +197,7 @@ describe("event tools", () => {
     const server = await createStdioServer("test-key", "i123");
     const result = await callTool(server, "delete_events_by_date_range", { start_date: "2025-01-01", end_date: "2025-01-31" });
 
-    expect(result.content[0].text).toBe("Deleted 0 events; 2 failed.");
+    expectTextToMirrorStructuredContent(result as never);
     expect(result.structuredContent.deleted_count).toBe(0);
     expect(result.structuredContent.failed_event_ids).toEqual(expect.arrayContaining(["e1", "e2"]));
   });

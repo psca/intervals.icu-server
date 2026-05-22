@@ -2,14 +2,9 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { IntervalsClient } from "../client.js";
 import { defaultDateRange } from "../utils.js";
+import { errorResult, textResult, type ToolTextResult } from "./result.js";
 
 type AthleteRecord = Record<string, unknown>;
-
-type ToolTextResult = {
-  content: { type: "text"; text: string }[];
-  structuredContent?: Record<string, unknown>;
-  isError?: boolean;
-};
 
 const POWER_CURVE_DURATIONS: [number, string][] = [
   [1, "1s"], [5, "5s"], [10, "10s"], [30, "30s"],
@@ -65,20 +60,6 @@ function formatDuration(seconds: number): string {
   const m = Math.floor((seconds % 3600) / 60);
   if (h > 0) return `${h}h ${m}m`;
   return `${m}m`;
-}
-
-function textResult(text: string, structuredContent: Record<string, unknown>): ToolTextResult {
-  return {
-    content: [{ type: "text", text }],
-    structuredContent,
-  };
-}
-
-function errorResult(errorLabel: string, error: unknown): ToolTextResult {
-  return {
-    content: [{ type: "text", text: `Error ${errorLabel}: ${error}` }],
-    isError: true,
-  };
 }
 
 async function withAthleteToolResult(
@@ -243,7 +224,7 @@ export function registerAthleteTools(server: McpServer, client: IntervalsClient)
 
         const fullName = [athlete.firstname, athlete.lastname].filter(Boolean).join(" ").trim();
         const locationParts = [athlete.city, athlete.country].filter(Boolean).map(String);
-        return textResult("Returned athlete profile.", {
+        return textResult({
           athlete_profile: {
             full_name: fullName,
             location: locationParts.length ? locationParts.join(", ") : null,
@@ -280,10 +261,10 @@ export function registerAthleteTools(server: McpServer, client: IntervalsClient)
           { q: query, limit: String(limit) }
         );
         if (!results?.length) {
-          return textResult(`No activities found matching "${query}".`, { query, activities: [], count: 0 });
+          return textResult({ query, activities: [], count: 0 });
         }
 
-        return textResult(`Returned ${results.length} activities matching "${query}".`, { query, activities: results, count: results.length });
+        return textResult({ query, activities: results, count: results.length });
       });
     }
   );
@@ -311,12 +292,12 @@ export function registerAthleteTools(server: McpServer, client: IntervalsClient)
           { type: activity_type, oldest: start_date ?? start, newest: end_date ?? end }
         );
         const curves = data?.list ?? [];
-        if (!curves.length) return textResult("No power curve data found.", { activity_type, curves: [], count: 0 });
+        if (!curves.length) return textResult({ activity_type, curves: [], count: 0 });
 
         const normalizedCurves = curves.map((curve) => {
           return normalizePowerCurve(curve);
         });
-        return textResult(`Returned ${normalizedCurves.length} power curves for ${activity_type}.`, { activity_type, curves: normalizedCurves, count: normalizedCurves.length });
+        return textResult({ activity_type, curves: normalizedCurves, count: normalizedCurves.length });
       });
     }
   );
@@ -344,12 +325,12 @@ export function registerAthleteTools(server: McpServer, client: IntervalsClient)
           { type: activity_type, oldest: start_date ?? start, newest: end_date ?? end }
         );
         const curves = data?.list ?? [];
-        if (!curves.length) return textResult("No pace curve data found.", { activity_type, curves: [], count: 0 });
+        if (!curves.length) return textResult({ activity_type, curves: [], count: 0 });
 
         const normalizedCurves = curves.map((curve) => {
           return normalizePaceCurve(curve);
         });
-        return textResult(`Returned ${normalizedCurves.length} pace curves for ${activity_type}.`, { activity_type, curves: normalizedCurves, count: normalizedCurves.length });
+        return textResult({ activity_type, curves: normalizedCurves, count: normalizedCurves.length });
       });
     }
   );
@@ -377,12 +358,12 @@ export function registerAthleteTools(server: McpServer, client: IntervalsClient)
           { type: activity_type, oldest: start_date ?? start, newest: end_date ?? end }
         );
         const curves = data?.list ?? [];
-        if (!curves.length) return textResult("No HR curve data found.", { activity_type, curves: [], count: 0 });
+        if (!curves.length) return textResult({ activity_type, curves: [], count: 0 });
 
         const normalizedCurves = curves.map((curve) => {
           return normalizeHrCurve(curve);
         });
-        return textResult(`Returned ${normalizedCurves.length} HR curves for ${activity_type}.`, { activity_type, curves: normalizedCurves, count: normalizedCurves.length });
+        return textResult({ activity_type, curves: normalizedCurves, count: normalizedCurves.length });
       });
     }
   );
@@ -402,7 +383,7 @@ export function registerAthleteTools(server: McpServer, client: IntervalsClient)
       return withAthleteToolResult("fetching gear", async () => {
         const gear = await client.get<AthleteRecord[]>(`/athlete/${client.athleteId}/gear`);
         if (!gear?.length) {
-          return textResult("No gear found.", { gear: [], active_gear_by_type: {}, retired_gear: [] });
+          return textResult({ gear: [], active_gear_by_type: {}, retired_gear: [] });
         }
 
         const byType: Record<string, AthleteRecord[]> = {};
@@ -419,7 +400,7 @@ export function registerAthleteTools(server: McpServer, client: IntervalsClient)
         );
         const retiredGear = normalizeGear(retired);
 
-        return textResult(`Returned ${normalizedGear.length} gear items.`, {
+        return textResult({
           gear: normalizedGear,
           active_gear_by_type: activeGearByType,
           retired_gear: retiredGear,

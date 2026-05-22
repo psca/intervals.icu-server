@@ -36,6 +36,11 @@ function makeServerWithClient() {
   return { client, tools };
 }
 
+function expectTextToMirrorStructuredContent(result: { content: { type: "text"; text: string }[]; structuredContent: unknown }) {
+  expect(result.content[0]?.type).toBe("text");
+  expect(JSON.parse(result.content[0]?.text ?? "")).toEqual(result.structuredContent);
+}
+
 describe("computeSampleIndices", () => {
   it("returns stride-based indices when timeData is empty", () => {
     const indices = computeSampleIndices([], 100, 10);
@@ -90,8 +95,8 @@ describe("registerActivityTools", () => {
       "/athlete/i123/activities",
       expect.objectContaining({ limit: "6" }),
     );
+    expectTextToMirrorStructuredContent(result as never);
     expect(result).toMatchObject({
-      content: [{ type: "text", text: "Returned 2 activities." }],
       structuredContent: {
         activities: [
           expect.objectContaining({ id: "a1", name: "Morning Ride" }),
@@ -114,8 +119,8 @@ describe("registerActivityTools", () => {
     const result = await tools.get_activity_details.handler({ activity_id: "a1" });
 
     expect(client.get).toHaveBeenCalledWith("/activity/a1");
+    expectTextToMirrorStructuredContent(result as never);
     expect(result).toMatchObject({
-      content: [{ type: "text", text: "Returned activity details." }],
       structuredContent: {
         activity: expect.objectContaining({ id: "a1", name: "Morning Ride", type: "Ride" }),
       },
@@ -132,8 +137,8 @@ describe("registerActivityTools", () => {
 
     const result = await tools.get_activity_intervals.handler({ activity_id: "a1" });
 
+    expectTextToMirrorStructuredContent(result as never);
     expect(result).toMatchObject({
-      content: [{ type: "text", text: "Returned 1 intervals and 1 groups." }],
       structuredContent: {
         activity_id: "a1",
         interval_count: 1,
@@ -156,8 +161,8 @@ describe("registerActivityTools", () => {
 
     const result = await tools.get_activity_streams.handler({ activity_id: "a1", stream_types: "time,watts" });
 
+    expectTextToMirrorStructuredContent(result as never);
     expect(result).toMatchObject({
-      content: [{ type: "text", text: "Returned 2 streams." }],
       structuredContent: {
         activity_id: "a1",
         requested_stream_types: "time,watts",
@@ -183,8 +188,8 @@ describe("registerActivityTools", () => {
       interval_seconds: 1800,
     });
 
+    expectTextToMirrorStructuredContent(result as never);
     expect(result).toMatchObject({
-      content: [{ type: "text", text: "Returned sampled route data." }],
       structuredContent: {
         activity_id: "a1",
         requested_stream_types: "latlng,bearing",
@@ -211,8 +216,8 @@ describe("registerActivityTools", () => {
 
     const result = await tools.get_activity_weather.handler({ activity_id: "a1" });
 
+    expectTextToMirrorStructuredContent(result as never);
     expect(result).toMatchObject({
-      content: [{ type: "text", text: "Returned activity weather." }],
       structuredContent: {
         activity_id: "a1",
         weather: expect.objectContaining({

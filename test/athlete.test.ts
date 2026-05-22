@@ -18,6 +18,11 @@ function makeServerWithClient() {
   return { client, tools };
 }
 
+function expectTextToMirrorStructuredContent(result: { content: { type: "text"; text: string }[]; structuredContent: unknown }) {
+  expect(result.content[0]?.type).toBe("text");
+  expect(JSON.parse(result.content[0]?.text ?? "")).toEqual(result.structuredContent);
+}
+
 describe("registerAthleteTools", () => {
   it("formats athlete sport settings from types arrays and unit-aware threshold pace", async () => {
     const { client, tools } = makeServerWithClient();
@@ -51,13 +56,8 @@ describe("registerAthleteTools", () => {
     const result = await tools.get_athlete_profile.handler();
 
     expect(client.get).toHaveBeenCalledWith("/athlete/i123");
+    expectTextToMirrorStructuredContent(result as never);
     expect(result).toMatchObject({
-      content: [
-        {
-          type: "text",
-          text: "Returned athlete profile.",
-        },
-      ],
       structuredContent: {
         athlete_profile: {
           full_name: "Alex Runner",
@@ -107,13 +107,8 @@ describe("registerAthleteTools", () => {
       "/athlete/i123/activities/search",
       { q: "tempo", limit: "1" },
     );
+    expectTextToMirrorStructuredContent(result as never);
     expect(result).toMatchObject({
-      content: [
-        {
-          type: "text",
-          text: 'Returned 1 activities matching "tempo".',
-        },
-      ],
       structuredContent: {
         query: "tempo",
         activities: [
@@ -150,13 +145,8 @@ describe("registerAthleteTools", () => {
       "/athlete/i123/power-curves",
       expect.objectContaining({ type: "Ride" }),
     );
+    expectTextToMirrorStructuredContent(result as never);
     expect(result).toMatchObject({
-      content: [
-        {
-          type: "text",
-          text: "Returned 1 power curves for Ride.",
-        },
-      ],
       structuredContent: {
         activity_type: "Ride",
         curves: [
@@ -191,13 +181,8 @@ describe("registerAthleteTools", () => {
 
     const result = await tools.get_pace_curves.handler({ activity_type: "Run" });
 
+    expectTextToMirrorStructuredContent(result as never);
     expect(result).toMatchObject({
-      content: [
-        {
-          type: "text",
-          text: "Returned 1 pace curves for Run.",
-        },
-      ],
       structuredContent: {
         activity_type: "Run",
         curves: [
@@ -235,13 +220,8 @@ describe("registerAthleteTools", () => {
 
     const result = await tools.get_hr_curves.handler({ activity_type: "Run" });
 
+    expectTextToMirrorStructuredContent(result as never);
     expect(result).toMatchObject({
-      content: [
-        {
-          type: "text",
-          text: "Returned 1 HR curves for Run.",
-        },
-      ],
       structuredContent: {
         activity_type: "Run",
         curves: [
@@ -268,13 +248,8 @@ describe("registerAthleteTools", () => {
 
     const result = await tools.get_gear.handler();
 
+    expectTextToMirrorStructuredContent(result as never);
     expect(result).toMatchObject({
-      content: [
-        {
-          type: "text",
-          text: "Returned 3 gear items.",
-        },
-      ],
       structuredContent: {
         gear: expect.arrayContaining([
           expect.objectContaining({ name: "Race Bike", type: "Bike", retired: false }),

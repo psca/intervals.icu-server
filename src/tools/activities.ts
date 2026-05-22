@@ -3,30 +3,11 @@ import { z } from "zod";
 import { IntervalsClient } from "../client.js";
 import { computeActivityWeather } from "../weather.js";
 import { defaultDateRange } from "../utils.js";
+import { errorResult, textResult, type ToolTextResult } from "./result.js";
 
 type ActivityRecord = Record<string, unknown>;
 
-type ToolTextResult = {
-  content: { type: "text"; text: string }[];
-  structuredContent?: Record<string, unknown>;
-  isError?: boolean;
-};
-
 const activityObjectSchema = z.record(z.string(), z.unknown());
-
-function textResult(text: string, structuredContent: Record<string, unknown>): ToolTextResult {
-  return {
-    content: [{ type: "text", text }],
-    structuredContent,
-  };
-}
-
-function errorResult(errorLabel: string, error: unknown): ToolTextResult {
-  return {
-    content: [{ type: "text", text: `Error ${errorLabel}: ${error}` }],
-    isError: true,
-  };
-}
 
 async function withActivityToolResult(
   errorLabel: string,
@@ -82,9 +63,9 @@ export function registerActivityTools(server: McpServer, client: IntervalsClient
         }
         activities = activities.slice(0, limit);
         if (!activities.length) {
-          return textResult("No activities found in the specified date range.", { activities: [], count: 0 });
+          return textResult({ activities: [], count: 0 });
         }
-        return textResult(`Returned ${activities.length} activities.`, { activities, count: activities.length });
+        return textResult({ activities, count: activities.length });
       });
     }
   );
@@ -104,7 +85,7 @@ export function registerActivityTools(server: McpServer, client: IntervalsClient
       return withActivityToolResult("fetching activity", async () => {
         const result = await client.get<ActivityRecord>(`/activity/${activity_id}`);
         const activity = Array.isArray(result) ? result[0] : result;
-        return textResult("Returned activity details.", { activity });
+        return textResult({ activity });
       });
     }
   );
@@ -129,14 +110,14 @@ export function registerActivityTools(server: McpServer, client: IntervalsClient
         const intervalCount = Array.isArray(result?.icu_intervals) ? result.icu_intervals.length : 0;
         const groupCount = Array.isArray(result?.icu_groups) ? result.icu_groups.length : 0;
         if (!result || (!("icu_intervals" in result) && !("icu_groups" in result))) {
-          return textResult("No interval data found.", {
+          return textResult({
             activity_id,
             interval_count: 0,
             group_count: 0,
             intervals_data: null,
           });
         }
-        return textResult(`Returned ${intervalCount} intervals and ${groupCount} groups.`, {
+        return textResult({
           activity_id,
           interval_count: intervalCount,
           group_count: groupCount,
@@ -170,13 +151,13 @@ export function registerActivityTools(server: McpServer, client: IntervalsClient
           `/activity/${activity_id}/streams`, { types }
         );
         if (!streams?.length) {
-          return textResult("No stream data found.", {
+          return textResult({
             activity_id,
             requested_stream_types: types,
             streams: [],
           });
         }
-        return textResult(`Returned ${streams.length} streams.`, {
+        return textResult({
           activity_id,
           requested_stream_types: types,
           streams,
@@ -209,7 +190,7 @@ export function registerActivityTools(server: McpServer, client: IntervalsClient
           `/activity/${activity_id}/streams`, { types: requestTypes }
         );
         if (!streams?.length) {
-          return textResult("No stream data found.", {
+          return textResult({
             activity_id,
             requested_stream_types: stream_types,
             route_data: null,
@@ -241,7 +222,7 @@ export function registerActivityTools(server: McpServer, client: IntervalsClient
         output.total_points = timeData.length;
         output.sampled_points = sampleIndices.length;
 
-        return textResult("Returned sampled route data.", {
+        return textResult({
           activity_id,
           requested_stream_types: stream_types,
           route_data: output,
@@ -271,7 +252,7 @@ export function registerActivityTools(server: McpServer, client: IntervalsClient
         const activity = await client.get<ActivityRecord>(`/activity/${activity_id}`);
         const startDateLocal = activity.start_date_local as string | undefined;
         if (!startDateLocal) {
-          return textResult("Weather unavailable: missing start date.", {
+          return textResult({
             activity_id,
             weather_available: false,
             reason: "missing start date",
@@ -297,7 +278,7 @@ export function registerActivityTools(server: McpServer, client: IntervalsClient
         const bearingData = (bearingStream?.data as (number | null)[]) ?? [];
 
         if (!lats.length || !lngs.length) {
-          return textResult("Weather unavailable: no GPS data for this activity.", {
+          return textResult({
             activity_id,
             weather_available: false,
             reason: "no GPS data for this activity",
@@ -314,7 +295,7 @@ export function registerActivityTools(server: McpServer, client: IntervalsClient
           date, startHour, sampledLats, sampledLngs, bearingData, sampledTime, sampleIndices
         );
 
-        return textResult("Returned activity weather.", {
+        return textResult({
           activity_id,
           weather_available: true,
           reason: null,

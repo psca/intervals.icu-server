@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { IntervalsClient } from "../client.js";
 import { defaultDateRange } from "../utils.js";
+import { textResult } from "./result.js";
 
 function normalizeWellnessEntry(entry: Record<string, unknown>): Record<string, unknown> {
   const sleepHours = entry.sleepSecs != null
@@ -74,19 +75,13 @@ export function registerWellnessTools(server: McpServer, client: IntervalsClient
           params
         );
         if (!result || (Array.isArray(result) && result.length === 0)) {
-          return {
-            content: [{ type: "text", text: "No wellness data found for the specified date range." }],
-            structuredContent: { entries: [], count: 0 },
-          };
+          return textResult({ entries: [], count: 0 });
         }
         const entries = Array.isArray(result) ? result : Object.values(result as object);
-        return {
-          content: [{ type: "text", text: `Returned ${entries.length} wellness entries.` }],
-          structuredContent: {
-            entries: entries.map(e => normalizeWellnessEntry(e as Record<string, unknown>)),
-            count: entries.length,
-          },
-        };
+        return textResult({
+          entries: entries.map(e => normalizeWellnessEntry(e as Record<string, unknown>)),
+          count: entries.length,
+        });
       } catch (e) {
         return { content: [{ type: "text", text: `Error fetching wellness data: ${e}` }], isError: true };
       }
