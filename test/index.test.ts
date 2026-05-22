@@ -27,6 +27,21 @@ function makeEnv(overrides: Partial<any> = {}): any {
   };
 }
 
+describe("defaultHandler /help", () => {
+  it("GET /help returns a public help page with section anchors", async () => {
+    const env = makeEnv();
+    const req = new Request("https://mcp.example.com/help");
+    const res = await defaultHandler.fetch(req, env);
+
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    expect(body).toContain('href="#chatgpt"');
+    expect(body).toContain('href="#claude"');
+    expect(body).toContain('href="#intervals-icu"');
+    expect(body).toContain("/mcp");
+  });
+});
+
 describe("defaultHandler /authorize", () => {
   it("renders provider choices when oauthReqInfo is valid", async () => {
     const env = makeEnv();
@@ -47,6 +62,7 @@ describe("defaultHandler /authorize", () => {
     expect(body).toContain("Continue with GitHub");
     expect(body).toContain("Continue with Google");
     expect(body).toContain("/login?flow=oauth");
+    expect(body).toContain('href="/help"');
     expect(env.OAUTH_KV.put).toHaveBeenCalledWith(
       expect.stringMatching(/^oauth_state:/),
       expect.stringContaining("client123"),
@@ -429,6 +445,7 @@ describe("defaultHandler /configure", () => {
     const body = await res.text();
     expect(body).toContain("athleteId");
     expect(body).toContain("apiKey");
+    expect(body).toContain('href="/help#intervals-icu"');
   });
 
   it("escapes configure state value in hidden input", async () => {
@@ -537,6 +554,7 @@ describe("defaultHandler /settings", () => {
     expect(body).toContain("Continue with GitHub");
     expect(body).toContain("Continue with Google");
     expect(body).toContain("/login?flow=settings");
+    expect(body).toContain('href="/help"');
     expect(env.OAUTH_KV.put).toHaveBeenCalledWith(
       expect.stringMatching(/^settings_state:/),
       expect.any(String),
@@ -562,6 +580,7 @@ describe("defaultHandler /settings", () => {
     const body = await res.text();
     expect(body).toContain("i123");
     expect(body).toContain("••••••••");
+    expect(body).toContain('href="/help"');
   });
 
   it("escapes identity display and athlete ID in settings HTML", async () => {
