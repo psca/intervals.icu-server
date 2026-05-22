@@ -4,7 +4,7 @@ An MCP (Model Context Protocol) server for [intervals.icu](https://intervals.icu
 
 Two modes:
 - **Local (stdio)** -- runs as a local process, no cloud account needed
-- **Remote (Cloudflare Worker)** -- persistent public endpoint with GitHub OAuth and per-user credentials
+- **Remote (Cloudflare Worker)** -- persistent public endpoint with GitHub or Google OAuth and per-user credentials
 
 ## Tools
 
@@ -74,13 +74,13 @@ That's it. The MCP client will spawn the server automatically.
 
 ## Option B: Remote Cloudflare Worker (with OAuth)
 
-Runs as a persistent public endpoint. Any GitHub user can authenticate and connect their own intervals.icu account. Suitable for use with Claude Web or any remote MCP client.
+Runs as a persistent public endpoint. Users can authenticate with GitHub or Google and connect their own intervals.icu account. Suitable for use with Claude Web or any remote MCP client.
 
 ### 1. Prerequisites
 
 - [Node.js](https://nodejs.org/) >= 18
 - A [Cloudflare](https://cloudflare.com) account
-- A [GitHub OAuth App](https://github.com/settings/developers) for authentication
+- A [GitHub OAuth App](https://github.com/settings/developers) and/or a Google OAuth web client for authentication
 
 ### 2. Clone and install
 
@@ -96,13 +96,22 @@ npm install
 2. Set **Authorization callback URL** to `https://intervals-mcp.<your-subdomain>.workers.dev/callback`
 3. Note the **Client ID** and generate a **Client Secret**
 
-### 4. Configure wrangler.toml
+### 4. Create a Google OAuth web client
 
-Update with your GitHub Client ID:
+1. In Google Cloud Console, create or select a project.
+2. Configure the OAuth consent screen for your deployment.
+3. Create an OAuth client ID with application type **Web application**.
+4. Add `https://intervals-mcp.<your-subdomain>.workers.dev/callback` as an authorized redirect URI.
+5. Note the **Client ID** and **Client Secret**.
+
+### 5. Configure wrangler.toml
+
+Update with your OAuth client IDs:
 
 ```toml
 [vars]
 GITHUB_CLIENT_ID = "<your-github-client-id>"
+GOOGLE_CLIENT_ID = "<your-google-client-id>"
 ```
 
 Create a KV namespace for OAuth token and credential storage:
@@ -112,16 +121,17 @@ npx wrangler kv namespace create OAUTH_KV
 # Add the returned ID to wrangler.toml under [[kv_namespaces]]
 ```
 
-### 5. Set secrets
+### 6. Set secrets
 
 ```bash
 # Generate a random 32-byte key for encrypting per-user credentials
 openssl rand -hex 32 | npx wrangler secret put CREDENTIALS_MASTER_KEY
 
 npx wrangler secret put GITHUB_CLIENT_SECRET  # GitHub OAuth app client secret
+npx wrangler secret put GOOGLE_CLIENT_SECRET
 ```
 
-### 6. Deploy
+### 7. Deploy
 
 ```bash
 npm run deploy
@@ -129,9 +139,9 @@ npm run deploy
 
 The worker deploys to `https://intervals-mcp.<your-subdomain>.workers.dev`.
 
-### 7. Connect your MCP client
+### 8. Connect your MCP client
 
-**Claude Web:** add the MCP server URL `https://intervals-mcp.<your-subdomain>.workers.dev/mcp`. Claude will redirect you through the GitHub OAuth flow on first use, then prompt you to enter your intervals.icu athlete ID and API key.
+**Claude Web:** add the MCP server URL `https://intervals-mcp.<your-subdomain>.workers.dev/mcp`. Claude will show a browser login page where you can continue with GitHub or Google, then enter your intervals.icu athlete ID and API key.
 
 **Claude Desktop / Claude Code** (`.mcp.json`):
 
@@ -146,7 +156,9 @@ The worker deploys to `https://intervals-mcp.<your-subdomain>.workers.dev`.
 }
 ```
 
-On first connection, your MCP client will open a browser window for GitHub login and credential setup.
+On first connection, your MCP client will open a browser window for provider login and credential setup.
+
+GitHub and Google identities are separate accounts. Existing credentials from versions that only used GitHub usernames are not migrated; reconnect and re-enter intervals.icu credentials after upgrading.
 
 ### Updating credentials
 
@@ -160,7 +172,7 @@ Visit `https://intervals-mcp.<your-subdomain>.workers.dev/settings` to update yo
 src/
   index.ts              CF Worker entry point -- OAuthProvider wraps apiHandler + defaultHandler
   stdio.ts              Node.js stdio entry point -- spawned by local MCP clients
-  auth.ts               GitHub OAuth helpers (exchange code, get username, validate intervals credentials)
+  auth.ts               OAuth helpers (provider auth URLs, code exchange, identity lookup, validate intervals credentials)
   crypto.ts             HKDF+AES-GCM per-user credential encryption
   client.ts             intervals.icu HTTP client with Basic auth
   formatting.ts         Human-readable formatters for activities, intervals, events, wellness
@@ -173,7 +185,7 @@ src/
 test/
   stdio.test.ts         stdio entry point unit tests
   index.test.ts         OAuth flow + apiHandler integration tests
-  auth.test.ts          GitHub OAuth helper unit tests
+  auth.test.ts          OAuth helper unit tests
   client.test.ts        Client unit tests
   formatting.test.ts    Formatter tests
   weather.test.ts       Weather utility tests
@@ -189,7 +201,7 @@ npm test
 
 ## Credits
 
-Inspired by [mvilanova/intervals-mcp-server](https://github.com/mvilanova/intervals-mcp-server). This project diverged significantly in architecture (TypeScript, Cloudflare Workers, GitHub OAuth) but shares the same goal of connecting AI assistants to intervals.icu training data.
+Inspired by [mvilanova/intervals-mcp-server](https://github.com/mvilanova/intervals-mcp-server). This project diverged significantly in architecture (TypeScript, Cloudflare Workers, OAuth-backed remote auth) but shares the same goal of connecting AI assistants to intervals.icu training data.
 
 ## License
 

@@ -6,7 +6,7 @@
 
 ## Project overview
 
-TypeScript Cloudflare Worker implementing an MCP server for intervals.icu training data. Provides 18 tools for activities, athlete profiles and curves, wellness, events, and weather analysis. Access is controlled via GitHub OAuth — any GitHub user can authenticate. Each user provides their own intervals.icu athlete ID and API key, collected during first-time OAuth via a `/configure` form and stored AES-256-GCM encrypted in OAUTH_KV. Credentials are manageable via the `/settings` page.
+TypeScript Cloudflare Worker implementing an MCP server for intervals.icu training data. Provides 18 tools for activities, athlete profiles and curves, wellness, events, and weather analysis. Access is controlled by GitHub or Google OAuth. Each provider identity maps to a separate account ID of the form `<provider>:<stable-subject>`. Users provide their own intervals.icu athlete ID and API key, collected during first-time OAuth via `/configure` and stored AES-256-GCM encrypted in OAUTH_KV.
 
 ## Tech stack
 
@@ -28,8 +28,8 @@ src/index.ts          -- CF Worker entry point; OAuthProvider as default export
                          apiHandler: handles /mcp (only reached after Bearer token validation)
 src/stdio.ts          -- Node.js stdio entry point; spawned by local MCP clients via npm run stdio
                          exports createStdioServer(apiKey, athleteId)
-src/auth.ts           -- GitHub OAuth helpers: buildGitHubAuthUrl, exchangeGitHubCode,
-                         getGitHubUsername, validateIntervalsCredentials
+src/auth.ts           -- OAuth helpers: provider URL construction, code exchange,
+                         identity lookup, account ID/key derivation, credential validation
 src/crypto.ts         -- HKDF+AES-GCM utilities: hexToBytes, encryptApiKey, decryptApiKey
                          (per-user credential encryption using CREDENTIALS_MASTER_KEY)
 src/client.ts         -- IntervalsClient: HTTP client with Basic auth for intervals.icu API
@@ -50,7 +50,7 @@ vitest.config.ts      -- cloudflare:workers module stub config (at project root,
 test/                 -- Unit tests (vitest)
   activities.test.ts  -- Activity tool sampling/route unit tests
   index.test.ts       -- defaultHandler + apiHandler integration tests
-  auth.test.ts        -- GitHub OAuth helper unit tests
+  auth.test.ts        -- OAuth helper unit tests
   client.test.ts      -- IntervalsClient unit tests
   crypto.test.ts      -- HKDF+AES-GCM encryption unit tests
   athlete.test.ts     -- Athlete tool formatter + endpoint contract unit tests
@@ -66,13 +66,13 @@ test/                 -- Unit tests (vitest)
 - **Stateless per-request:** Each request creates a new `McpServer` + `IntervalsClient`. No session state, no Durable Objects. `sessionIdGenerator: undefined` disables MCP sessions.
 - **Auth gating:** `OAuthProvider` validates the Bearer token and calls `apiHandler` only on success. Unauthenticated requests to `/mcp` get a 401 before any MCP work is done.
 - **MCP method handling:** `apiHandler` only accepts POST. Other methods return 405 with `Allow: POST`, which prevents stateless SSE/GET probes from hanging the Worker.
-- **Open access:** Any GitHub user can authenticate. Access is gated by valid intervals.icu credentials, not a username allowlist.
+- **Open access:** Any GitHub or Google user can authenticate. Access is gated by valid intervals.icu credentials, not an allowlist.
 - **Unified callback:** Both MCP OAuth and settings OAuth redirect to `/callback`. The handler checks `oauth_state:<id>` first; if not found, tries `settings_state:<id>` to determine the flow.
-- **OAuth state:** During `/authorize`, a UUID state ID is stored in KV (`oauth_state:<id>`) with a 10-minute TTL, carrying the `oauthReqInfo` through the GitHub round-trip.
-- **KV key patterns:** `oauth_state:<uuid>` (10min TTL, oauthReqInfo), `configure_state:<uuid>` (10min TTL, {oauthReqInfo, username}), `credentials:<username>` (no TTL, {athleteId, encryptedApiKey, iv}), `settings_state:<uuid>` (10min TTL, placeholder), `settings_session:<uuid>` (1hr TTL, {username}). `POST /settings/disconnect` deletes both `credentials:<username>` and `settings_session:<token>` and revokes all OAuth grants via `listUserGrants`/`revokeGrant`.
-- **Per-user credentials:** `apiHandler` reads `credentials:<username>` from KV using `ctx.props.username`, decrypts the API key with HKDF-derived per-user key, then creates `IntervalsClient`. Returns 401 with `/settings` link if credentials not found.
-- **Credential collection flow:** First-time OAuth redirects to `/configure` (form) after GitHub auth. Returning users with stored credentials complete authorization directly. `/settings` provides a separate GitHub OAuth mini-loop to update credentials without re-authorizing MCP clients.
-- **Settings session expiry:** If the `settings_session` cookie exists but the KV entry has expired (1hr TTL), `GET /settings` restarts GitHub OAuth rather than returning a 401 — this is intentional so users never hit a dead end.
+- **OAuth state:** During `/authorize`, a UUID state ID is stored in KV (`oauth_state:<id>`) with a 10-minute TTL, carrying the `oauthReqInfo` through the provider round-trip.
+- **KV key patterns:** `oauth_state:<uuid>` (10min TTL, {oauthReqInfo, provider?}), `settings_state:<uuid>` (10min TTL, {flow, provider?}), `configure_state:<uuid>` (10min TTL, {oauthReqInfo, identity, accountId}), `credentials:<accountId>` (no TTL, {athleteId, encryptedApiKey, iv}), `settings_session:<uuid>` (1hr TTL, {accountId, identity}).
+- **Per-user credentials:** `apiHandler` reads `credentials:<accountId>` from KV using the provider-scoped account ID in OAuth props, decrypts the API key with an HKDF-derived per-user key, then creates `IntervalsClient`. Returns 401 with a `/settings` link if credentials are missing.
+- **Credential collection flow:** First-time OAuth redirects to `/configure` (form) after provider auth. Returning users with stored credentials complete authorization directly. `/settings` provides a separate provider-login mini-loop to update credentials without re-authorizing MCP clients.
+- **Settings session expiry:** If the `settings_session` cookie exists but the KV entry has expired (1hr TTL), `GET /settings` restarts provider OAuth rather than returning a 401 so users can recover cleanly.
 - **Shared page CSS:** All HTML responses use a `PAGE_CSS` constant exported from `src/styles.ts`. Edit it there to restyle all pages at once.
 - **Error handling:** Every tool wraps logic in try/catch and returns error text to the MCP client (never crashes the Worker).
 - **Sampling logic:** `computeSampleIndices()` in `activities.ts` handles time-based downsampling for GPS streams. Auto-injects `time` stream type when not requested.
@@ -97,10 +97,12 @@ npm run stdio      # run stdio MCP server locally (requires API_KEY + ATHLETE_ID
 Set via `npx wrangler secret put <NAME>`:
 - `CREDENTIALS_MASTER_KEY` -- 32-byte hex key for AES-256-GCM encryption (generate: `openssl rand -hex 32`)
 - `GITHUB_CLIENT_SECRET` -- GitHub OAuth app client secret
+- `GOOGLE_CLIENT_SECRET` -- Google OAuth web client secret
 
 ## Env vars (wrangler.toml)
 
 - `GITHUB_CLIENT_ID` -- GitHub OAuth app client ID (not a secret, safe to commit)
+- `GOOGLE_CLIENT_ID` -- Google OAuth web client ID (not a secret, safe to commit)
 
 ## KV namespaces (wrangler.toml)
 

@@ -4,6 +4,7 @@ compatibility_date = "2026-01-01"
 
 [vars]
 GITHUB_CLIENT_ID = "Ov23liflb9H0LWSpbkCd"
+GOOGLE_CLIENT_ID = "<your-google-client-id>"
 
 [[kv_namespaces]]
 binding = "OAUTH_KV"
@@ -19,3 +20,4 @@ enabled = false
 # Secrets set via `npx wrangler secret put <NAME>`:
 #   CREDENTIALS_MASTER_KEY  -- 32-byte hex key for AES-256-GCM encryption (generate: openssl rand -hex 32)
 #   GITHUB_CLIENT_SECRET    -- GitHub OAuth app client secret
+#   GOOGLE_CLIENT_SECRET    -- Google OAuth web client secret
