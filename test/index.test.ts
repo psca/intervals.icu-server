@@ -62,7 +62,7 @@ describe("defaultHandler /authorize", () => {
     expect(body).toContain("Continue with GitHub");
     expect(body).toContain("Continue with Google");
     expect(body).toContain("/login?flow=oauth");
-    expect(body).toContain('href="/help"');
+    expect(body).not.toContain('href="/help"');
     expect(env.OAUTH_KV.put).toHaveBeenCalledWith(
       expect.stringMatching(/^oauth_state:/),
       expect.stringContaining("client123"),
@@ -445,8 +445,8 @@ describe("defaultHandler /configure", () => {
     const body = await res.text();
     expect(body).toContain("athleteId");
     expect(body).toContain("apiKey");
-    expect(body).toContain('href="/help#intervals-icu"');
-    expect(body).toContain('target="_blank"');
+    expect(body).not.toContain('href="/help#intervals-icu"');
+    expect(body).not.toContain('target="_blank"');
   });
 
   it("escapes configure state value in hidden input", async () => {
@@ -555,7 +555,7 @@ describe("defaultHandler /settings", () => {
     expect(body).toContain("Continue with GitHub");
     expect(body).toContain("Continue with Google");
     expect(body).toContain("/login?flow=settings");
-    expect(body).toContain('href="/help"');
+    expect(body).not.toContain('href="/help"');
     expect(env.OAUTH_KV.put).toHaveBeenCalledWith(
       expect.stringMatching(/^settings_state:/),
       expect.any(String),
