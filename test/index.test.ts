@@ -160,12 +160,12 @@ describe("defaultHandler /callback", () => {
 
   it("redirects to client after successful auth", async () => {
     const env = makeEnv();
-    env.OAUTH_KV.get.mockResolvedValue(
-      JSON.stringify({
+    env.OAUTH_KV.get
+      .mockResolvedValueOnce(JSON.stringify({
         oauthReqInfo: { clientId: "c", redirectUri: "https://r", scope: ["mcp"], state: "s" },
         provider: "github",
-      })
-    );
+      }))
+      .mockResolvedValueOnce(JSON.stringify({ athleteId: "i123", encryptedApiKey: "enc", iv: "iv" }));
     env.OAUTH_PROVIDER.completeAuthorization.mockResolvedValue({
       redirectTo: "https://claude.ai/callback?code=authcode",
     });
@@ -183,6 +183,7 @@ describe("defaultHandler /callback", () => {
     const res = await defaultHandler.fetch(req, env);
     expect(res.status).toBe(302);
     expect(res.headers.get("Location")).toContain("claude.ai");
+    expect(env.OAUTH_KV.get).toHaveBeenCalledWith("credentials:github:12345");
   });
 
   it("redirects to /configure when user has no credentials", async () => {
@@ -247,6 +248,26 @@ describe("defaultHandler /callback", () => {
     expect(cookie).toContain("HttpOnly");
     expect(cookie).toContain("SameSite=Lax");
     expect(env.OAUTH_KV.delete).toHaveBeenCalledWith("settings_state:validstate");
+    expect(env.OAUTH_KV.put).toHaveBeenCalledWith(
+      expect.stringMatching(/^settings_session:/),
+      expect.stringContaining('"accountId":"github:12345"'),
+      expect.objectContaining({ expirationTtl: 3600 })
+    );
+    expect(env.OAUTH_KV.put).toHaveBeenCalledWith(
+      expect.stringMatching(/^settings_session:/),
+      expect.stringContaining('"provider":"github"'),
+      expect.objectContaining({ expirationTtl: 3600 })
+    );
+    expect(env.OAUTH_KV.put).toHaveBeenCalledWith(
+      expect.stringMatching(/^settings_session:/),
+      expect.stringContaining('"subject":"12345"'),
+      expect.objectContaining({ expirationTtl: 3600 })
+    );
+    expect(env.OAUTH_KV.put).toHaveBeenCalledWith(
+      expect.stringMatching(/^settings_session:/),
+      expect.stringContaining('"displayName":"testuser"'),
+      expect.objectContaining({ expirationTtl: 3600 })
+    );
   });
 
   it("returns 400 when settings state has no selected provider", async () => {
