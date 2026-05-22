@@ -4,7 +4,7 @@ An MCP (Model Context Protocol) server for [intervals.icu](https://intervals.icu
 
 Two modes:
 - **Local (stdio)** -- runs as a local process, no cloud account needed
-- **Remote (Cloudflare Worker)** -- persistent public endpoint with GitHub or Google OAuth and per-user credentials
+- **Remote (Cloudflare Worker)** -- persistent public endpoint with GitHub and Google OAuth configured, plus per-user intervals.icu credentials
 
 ## Tools
 
@@ -74,13 +74,14 @@ That's it. The MCP client will spawn the server automatically.
 
 ## Option B: Remote Cloudflare Worker (with OAuth)
 
-Runs as a persistent public endpoint. Users can authenticate with GitHub or Google and connect their own intervals.icu account. Suitable for use with Claude Web or any remote MCP client.
+Runs as a persistent public endpoint. In the current Worker implementation, the login page always shows both GitHub and Google options, so deployments must configure both providers. Users can then authenticate with either provider and connect their own intervals.icu account. Suitable for use with Claude Web or any remote MCP client.
 
 ### 1. Prerequisites
 
 - [Node.js](https://nodejs.org/) >= 18
 - A [Cloudflare](https://cloudflare.com) account
-- A [GitHub OAuth App](https://github.com/settings/developers) and/or a Google OAuth web client for authentication
+- A [GitHub OAuth App](https://github.com/settings/developers) for authentication
+- A Google OAuth web client for authentication
 
 ### 2. Clone and install
 
@@ -106,7 +107,7 @@ npm install
 
 ### 5. Configure wrangler.toml
 
-Update with your OAuth client IDs:
+Update with both OAuth client IDs:
 
 ```toml
 [vars]
@@ -128,7 +129,7 @@ npx wrangler kv namespace create OAUTH_KV
 openssl rand -hex 32 | npx wrangler secret put CREDENTIALS_MASTER_KEY
 
 npx wrangler secret put GITHUB_CLIENT_SECRET  # GitHub OAuth app client secret
-npx wrangler secret put GOOGLE_CLIENT_SECRET
+npx wrangler secret put GOOGLE_CLIENT_SECRET  # Google OAuth web client secret
 ```
 
 ### 7. Deploy

@@ -22,7 +22,7 @@ TypeScript Cloudflare Worker implementing an MCP server for intervals.icu traini
 
 ```
 src/index.ts          -- CF Worker entry point; OAuthProvider as default export
-                         defaultHandler: handles /authorize, /callback, /configure (GET+POST),
+                         defaultHandler: handles /authorize, /login, /callback, /configure (GET+POST),
                            /settings, /settings/save, /settings/disconnect,
                            /settings/disconnected
                          apiHandler: handles /mcp (only reached after Bearer token validation)
