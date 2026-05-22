@@ -484,6 +484,29 @@ describe("defaultHandler /settings", () => {
     expect(body).toContain("••••••••");
   });
 
+  it("GET /settings with legacy session payload renders provider choices", async () => {
+    const env = makeEnv();
+    env.OAUTH_KV.get
+      .mockResolvedValueOnce({ username: "testuser" })
+      .mockResolvedValueOnce(null);
+
+    const req = new Request("https://mcp.example.com/settings", {
+      headers: { Cookie: "settings_session=mytoken" },
+    });
+    const res = await defaultHandler.fetch(req, env);
+    const body = await res.text();
+
+    expect(res.status).toBe(200);
+    expect(body).toContain("Continue with GitHub");
+    expect(body).toContain("Continue with Google");
+    expect(env.OAUTH_KV.get).not.toHaveBeenCalledWith("credentials:undefined", "json");
+    expect(env.OAUTH_KV.put).toHaveBeenCalledWith(
+      expect.stringMatching(/^settings_state:/),
+      expect.any(String),
+      expect.objectContaining({ expirationTtl: 600 })
+    );
+  });
+
   it("POST /settings/save returns 401 with no session", async () => {
     const env = makeEnv();
     env.OAUTH_KV.get.mockResolvedValue(null); // no session found
@@ -494,6 +517,24 @@ describe("defaultHandler /settings", () => {
     });
     const res = await defaultHandler.fetch(req, env);
     expect(res.status).toBe(401);
+  });
+
+  it("POST /settings/save returns 401 with legacy session payload", async () => {
+    const env = makeEnv();
+    env.OAUTH_KV.get.mockResolvedValue({ username: "testuser" });
+
+    const req = new Request("https://mcp.example.com/settings/save", {
+      method: "POST",
+      body: new URLSearchParams({ athleteId: "i123", apiKey: "key" }),
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        Cookie: "settings_session=mytoken",
+      },
+    });
+    const res = await defaultHandler.fetch(req, env);
+
+    expect(res.status).toBe(401);
+    expect(env.OAUTH_KV.get).not.toHaveBeenCalledWith("credentials:undefined", "json");
   });
 
   it("POST /settings/save updates credentials on valid input", async () => {
@@ -683,6 +724,21 @@ describe("defaultHandler /settings/disconnect", () => {
     expect(res.status).toBe(401);
   });
 
+  it("POST with legacy session payload returns 401", async () => {
+    const env = makeEnv();
+    env.OAUTH_KV.get.mockResolvedValueOnce({ username: "testuser" });
+
+    const req = new Request("https://mcp.example.com/settings/disconnect", {
+      method: "POST",
+      headers: { Cookie: "settings_session=legacy" },
+    });
+    const res = await defaultHandler.fetch(req, env);
+
+    expect(res.status).toBe(401);
+    expect(env.OAUTH_PROVIDER.listUserGrants).not.toHaveBeenCalled();
+    expect(env.OAUTH_KV.delete).not.toHaveBeenCalledWith("credentials:undefined");
+  });
+
   it("POST with valid session revokes all grants, deletes credentials and session, redirects", async () => {
     const env = makeEnv();
     env.OAUTH_KV.get.mockResolvedValueOnce({
@@ -816,7 +872,7 @@ describe("apiHandler", () => {
     const res = await apiHandler.fetch(req, env, ctx);
 
     expect(res.status).toBe(401);
-    expect(env.OAUTH_KV.get).not.toHaveBeenCalledWith("credentials:undefined", "json");
+    expect(env.OAUTH_KV.get).not.toHaveBeenCalled();
   });
 
   it("creates IntervalsClient with decrypted credentials", async () => {

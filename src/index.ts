@@ -87,6 +87,25 @@ function identityDisplay(identity: AuthIdentity): string {
   return identity.displayName;
 }
 
+function isSettingsSession(value: unknown): value is SettingsSession {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const maybeSession = value as Record<string, unknown>;
+  if (typeof maybeSession.accountId !== "string" || !maybeSession.accountId) {
+    return false;
+  }
+
+  const identity = maybeSession.identity;
+  if (!identity || typeof identity !== "object") {
+    return false;
+  }
+
+  const maybeIdentity = identity as Record<string, unknown>;
+  return isAuthProvider(maybeIdentity.provider) && typeof maybeIdentity.displayName === "string";
+}
+
 async function resolveIdentity(
   provider: AuthProvider,
   code: string,
@@ -409,8 +428,8 @@ const defaultHandler = {
         return renderProviderChoicePage("settings", stateId);
       }
 
-      const session = await env.OAUTH_KV.get(`settings_session:${sessionToken}`, "json") as SettingsSession | null;
-      if (!session) {
+      const rawSession = await env.OAUTH_KV.get(`settings_session:${sessionToken}`, "json");
+      if (!isSettingsSession(rawSession)) {
         const stateId = crypto.randomUUID();
         await env.OAUTH_KV.put(
           `settings_state:${stateId}`,
@@ -419,6 +438,7 @@ const defaultHandler = {
         );
         return renderProviderChoicePage("settings", stateId);
       }
+      const session = rawSession;
 
       const creds = await env.OAUTH_KV.get(credentialsKey(session.accountId), "json") as StoredCredentials | null;
 
@@ -465,8 +485,9 @@ const defaultHandler = {
       const sessionToken = getSessionToken(request);
       if (!sessionToken) return new Response("Unauthorized", { status: 401 });
 
-      const session = await env.OAUTH_KV.get(`settings_session:${sessionToken}`, "json") as SettingsSession | null;
-      if (!session) return new Response("Session expired", { status: 401 });
+      const rawSession = await env.OAUTH_KV.get(`settings_session:${sessionToken}`, "json");
+      if (!isSettingsSession(rawSession)) return new Response("Session expired", { status: 401 });
+      const session = rawSession;
 
       const body = await request.formData();
       const athleteId = ((body.get("athleteId") as string | null) ?? "").trim();
@@ -604,8 +625,9 @@ const defaultHandler = {
       const sessionToken = getSessionToken(request);
       if (!sessionToken) return new Response("Unauthorized", { status: 401 });
 
-      const session = await env.OAUTH_KV.get(`settings_session:${sessionToken}`, "json") as SettingsSession | null;
-      if (!session) return new Response("Session expired", { status: 401 });
+      const rawSession = await env.OAUTH_KV.get(`settings_session:${sessionToken}`, "json");
+      if (!isSettingsSession(rawSession)) return new Response("Session expired", { status: 401 });
+      const session = rawSession;
 
       const userAccountId = session.accountId;
 
