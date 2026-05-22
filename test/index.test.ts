@@ -28,16 +28,16 @@ function makeEnv(overrides: Partial<any> = {}): any {
 }
 
 describe("defaultHandler /help", () => {
-  it("GET /help returns a public help page with section anchors", async () => {
+  it("GET /help returns a public help page with sections", async () => {
     const env = makeEnv();
     const req = new Request("https://mcp.example.com/help");
     const res = await defaultHandler.fetch(req, env);
 
     expect(res.status).toBe(200);
     const body = await res.text();
-    expect(body).toContain('href="#chatgpt"');
-    expect(body).toContain('href="#claude"');
-    expect(body).toContain('href="#intervals-icu"');
+    expect(body).toContain('id="chatgpt"');
+    expect(body).toContain('id="claude"');
+    expect(body).toContain('id="intervals-icu"');
     expect(body).toContain("/mcp");
   });
 });
@@ -446,6 +446,7 @@ describe("defaultHandler /configure", () => {
     expect(body).toContain("athleteId");
     expect(body).toContain("apiKey");
     expect(body).toContain('href="/help#intervals-icu"');
+    expect(body).toContain('target="_blank"');
   });
 
   it("escapes configure state value in hidden input", async () => {

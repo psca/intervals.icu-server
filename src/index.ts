@@ -227,11 +227,6 @@ function renderHelpPage(origin: string): Response {
         <h1>Help</h1>
         <p class="subtitle">Use this server with your MCP client and your intervals.icu account.</p>
         <div class="page-actions">${helpLink("/settings", "Settings")}</div>
-        <nav class="section-nav" aria-label="Help sections">
-          <a href="#chatgpt">ChatGPT</a>
-          <a href="#claude">Claude</a>
-          <a href="#intervals-icu">intervals.icu</a>
-        </nav>
 
         <section class="doc-section" id="chatgpt">
           <h2>ChatGPT</h2>
@@ -446,7 +441,7 @@ const defaultHandler = {
               <h1>Connect your intervals.icu account</h1>
               <p class="subtitle">
                 Enter your intervals.icu credentials to get started.
-                <a href="/help#intervals-icu">Need help finding them?</a>
+                <a href="/help#intervals-icu" target="_blank" rel="noreferrer">Need help finding them?</a>
               </p>
               ${errorHtml}
               <form method="POST" action="/configure">
