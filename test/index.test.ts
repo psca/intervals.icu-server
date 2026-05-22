@@ -39,6 +39,8 @@ describe("defaultHandler /help", () => {
     expect(body).toContain('id="claude"');
     expect(body).toContain('id="intervals-icu"');
     expect(body).toContain("/mcp");
+    expect(body).toContain("https://intervals.icu/settings");
+    expect(body).toContain("Developer Settings");
   });
 });
 

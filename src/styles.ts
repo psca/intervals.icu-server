@@ -59,6 +59,18 @@ export const PAGE_CSS = `
   .doc-section { margin-top: 28px; }
   .doc-section ol { margin: 12px 0 0 20px; }
   .doc-section li + li { margin-top: 8px; }
+  .settings-shot {
+    margin-top: 12px; padding: 14px 16px; border: 1px solid #e5e7eb;
+    border-radius: 10px; background: #fafafa; color: #374151;
+  }
+  .settings-shot__title {
+    color: #2563eb; font-size: 12px; font-weight: 600; margin-bottom: 10px;
+  }
+  .settings-shot__fields {
+    display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px;
+  }
+  .settings-shot__label { font-size: 12px; color: #6b7280; margin-bottom: 4px; }
+  .settings-shot__value { font-size: 18px; line-height: 1.2; color: #111827; }
   .docs-card code {
     display: inline-block; padding: 2px 6px; border-radius: 4px;
     background: #f3f4f6; color: #111827; font-size: 13px;

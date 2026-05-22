@@ -249,7 +249,23 @@ function renderHelpPage(origin: string): Response {
           <h2>intervals.icu</h2>
           <ol>
             <li>Open ${helpLink("/settings", "Settings")} and sign in with GitHub or Google.</li>
-            <li>Enter your intervals.icu athlete ID and API key.</li>
+            <li>Open <a href="https://intervals.icu/settings" target="_blank" rel="noreferrer">intervals.icu/settings</a> and scroll down to <strong>Developer Settings</strong>.</li>
+            <li>
+              Copy your athlete ID and API key from that section.
+              <div class="settings-shot" aria-label="intervals.icu Developer Settings reference">
+                <div class="settings-shot__title">Developer Settings</div>
+                <div class="settings-shot__fields">
+                  <div>
+                    <div class="settings-shot__label">Athlete ID</div>
+                    <div class="settings-shot__value">i12345</div>
+                  </div>
+                  <div>
+                    <div class="settings-shot__label">API Key</div>
+                    <div class="settings-shot__value">(view)</div>
+                  </div>
+                </div>
+              </div>
+            </li>
             <li>Save the credentials, then reconnect your MCP client if needed.</li>
           </ol>
         </section>
