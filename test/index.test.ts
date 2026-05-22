@@ -367,10 +367,38 @@ describe("defaultHandler /callback", () => {
     expect(env.OAUTH_KV.delete).toHaveBeenCalledWith("oauth_state:validstate");
     expect(env.OAUTH_KV.get).toHaveBeenCalledWith("credentials:google:108765432109876543210");
     expect(env.OAUTH_PROVIDER.completeAuthorization).toHaveBeenCalledWith(expect.objectContaining({
-      userId: "google:108765432109876543210",
+      userId: "Z29vZ2xlOjEwODc2NTQzMjEwOTg3NjU0MzIxMA",
       metadata: expect.objectContaining({ provider: "google", email: "ada@example.com" }),
       props: expect.objectContaining({ accountId: "google:108765432109876543210" }),
     }));
+  });
+
+  it("preserves plus signs in Google callback authorization codes", async () => {
+    const env = makeEnv();
+    env.OAUTH_KV.get
+      .mockResolvedValueOnce(JSON.stringify({
+        oauthReqInfo: { clientId: "c", redirectUri: "https://r", scope: ["mcp"], state: "s" },
+        provider: "google",
+      }))
+      .mockResolvedValueOnce(JSON.stringify({ athleteId: "i123", encryptedApiKey: "enc", iv: "iv" }));
+    env.OAUTH_PROVIDER.completeAuthorization.mockResolvedValue({ redirectTo: "https://claude.ai/cb" });
+
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce({ json: () => Promise.resolve({ access_token: "goog_tok" }) })
+      .mockResolvedValueOnce({ json: () => Promise.resolve({
+        sub: "108765432109876543210",
+        name: "Ada User",
+        email: "ada@example.com",
+        email_verified: true,
+      }) })
+    );
+
+    const req = new Request("https://mcp.example.com/callback?code=4%2F0AQSTgQ+abc123&state=validstate");
+    const res = await defaultHandler.fetch(req, env);
+
+    expect(res.status).toBe(302);
+    const [, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect((init as RequestInit).body).toContain("code=4%2F0AQSTgQ%2Babc123");
   });
 });
 
@@ -490,7 +518,7 @@ describe("defaultHandler /configure", () => {
       expect.stringContaining("athleteId")
     );
     expect(env.OAUTH_PROVIDER.completeAuthorization).toHaveBeenCalledWith(expect.objectContaining({
-      userId: "github:12345",
+      userId: "Z2l0aHViOjEyMzQ1",
       props: expect.objectContaining({ accountId: "github:12345" }),
     }));
   });
@@ -840,8 +868,8 @@ describe("defaultHandler /settings/disconnect", () => {
     expect(res.headers.get("Location")).toBe("https://mcp.example.com/settings/disconnected");
     expect(res.headers.get("Set-Cookie")).toContain("Max-Age=0");
     expect(res.headers.get("Set-Cookie")).toContain("Path=/settings");
-    expect(env.OAUTH_PROVIDER.revokeGrant).toHaveBeenCalledWith("grant-1", "github:12345");
-    expect(env.OAUTH_PROVIDER.revokeGrant).toHaveBeenCalledWith("grant-2", "github:12345");
+    expect(env.OAUTH_PROVIDER.revokeGrant).toHaveBeenCalledWith("grant-1", "Z2l0aHViOjEyMzQ1");
+    expect(env.OAUTH_PROVIDER.revokeGrant).toHaveBeenCalledWith("grant-2", "Z2l0aHViOjEyMzQ1");
     expect(env.OAUTH_KV.delete).toHaveBeenCalledWith("credentials:github:12345");
     expect(env.OAUTH_KV.delete).toHaveBeenCalledWith("settings_session:mytoken");
   });
@@ -883,10 +911,10 @@ describe("defaultHandler /settings/disconnect", () => {
     await defaultHandler.fetch(req, env);
 
     expect(env.OAUTH_PROVIDER.listUserGrants).toHaveBeenCalledTimes(2);
-    expect(env.OAUTH_PROVIDER.listUserGrants).toHaveBeenNthCalledWith(1, "github:12345");
-    expect(env.OAUTH_PROVIDER.listUserGrants).toHaveBeenNthCalledWith(2, "github:12345", { cursor: "page2cursor" });
-    expect(env.OAUTH_PROVIDER.revokeGrant).toHaveBeenCalledWith("grant-1", "github:12345");
-    expect(env.OAUTH_PROVIDER.revokeGrant).toHaveBeenCalledWith("grant-2", "github:12345");
+    expect(env.OAUTH_PROVIDER.listUserGrants).toHaveBeenNthCalledWith(1, "Z2l0aHViOjEyMzQ1");
+    expect(env.OAUTH_PROVIDER.listUserGrants).toHaveBeenNthCalledWith(2, "Z2l0aHViOjEyMzQ1", { cursor: "page2cursor" });
+    expect(env.OAUTH_PROVIDER.revokeGrant).toHaveBeenCalledWith("grant-1", "Z2l0aHViOjEyMzQ1");
+    expect(env.OAUTH_PROVIDER.revokeGrant).toHaveBeenCalledWith("grant-2", "Z2l0aHViOjEyMzQ1");
   });
 
   it("POST continues deleting credentials even if one revokeGrant fails", async () => {

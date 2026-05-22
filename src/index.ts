@@ -59,6 +59,28 @@ function callbackUrl(request: Request): string {
   return `${url.protocol}//${url.host}/callback`;
 }
 
+function oauthGrantUserId(accountId: string): string {
+  return btoa(accountId)
+    .replaceAll("+", "-")
+    .replaceAll("/", "_")
+    .replace(/=+$/g, "");
+}
+
+function getQueryParamPreservingPlus(url: URL, name: string): string | null {
+  const query = url.search.startsWith("?") ? url.search.slice(1) : url.search;
+  for (const part of query.split("&")) {
+    if (!part) continue;
+    const separator = part.indexOf("=");
+    const rawKey = separator === -1 ? part : part.slice(0, separator);
+    if (decodeURIComponent(rawKey.replaceAll("+", " ")) !== name) {
+      continue;
+    }
+    const rawValue = separator === -1 ? "" : part.slice(separator + 1);
+    return decodeURIComponent(rawValue.replaceAll("+", "%2B"));
+  }
+  return null;
+}
+
 function providerClientId(env: Env, provider: AuthProvider): string {
   return provider === "github" ? env.GITHUB_CLIENT_ID : env.GOOGLE_CLIENT_ID;
 }
@@ -129,7 +151,7 @@ function authorizationPayload(
 ) {
   return {
     request: oauthReqInfo,
-    userId: userAccountId,
+    userId: oauthGrantUserId(userAccountId),
     metadata: {
       provider: identity.provider,
       subject: identity.subject,
@@ -238,7 +260,7 @@ const defaultHandler = {
     // Verify the user is allowed, then call completeAuthorization so the library
     // issues an auth code and redirects the client back.
     if (url.pathname === "/callback") {
-      const authCode = url.searchParams.get("code");
+      const authCode = getQueryParamPreservingPlus(url, "code");
       const stateId = url.searchParams.get("state");
 
       if (!authCode || !stateId) {
@@ -637,20 +659,21 @@ const defaultHandler = {
       const session = rawSession;
 
       const userAccountId = session.accountId;
+      const oauthUserId = oauthGrantUserId(userAccountId);
 
       // Paginate through all grants and collect them
       const grants: Array<{ id: string }> = [];
       let cursor: string | undefined;
       do {
         const result = cursor
-          ? await env.OAUTH_PROVIDER.listUserGrants(userAccountId, { cursor })
-          : await env.OAUTH_PROVIDER.listUserGrants(userAccountId);
+          ? await env.OAUTH_PROVIDER.listUserGrants(oauthUserId, { cursor })
+          : await env.OAUTH_PROVIDER.listUserGrants(oauthUserId);
         grants.push(...result.items);
         cursor = result.cursor;
       } while (cursor);
 
       // Best-effort revocation — a single failure must not block credential deletion
-      await Promise.allSettled(grants.map(g => env.OAUTH_PROVIDER.revokeGrant(g.id, userAccountId)));
+      await Promise.allSettled(grants.map(g => env.OAUTH_PROVIDER.revokeGrant(g.id, oauthUserId)));
 
       await env.OAUTH_KV.delete(credentialsKey(userAccountId));
       await env.OAUTH_KV.delete(`settings_session:${sessionToken}`);
