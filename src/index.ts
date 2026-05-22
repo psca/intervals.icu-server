@@ -181,6 +181,7 @@ function renderProviderChoicePage(flow: "oauth" | "settings", stateId: string): 
       <style>${PAGE_CSS}</style>
     </head><body>
       <div class="card">
+        <div class="page-actions">${helpLink()}</div>
         <h1>Sign in</h1>
         <p class="subtitle">Choose how you want to continue.</p>
         <div class="provider-actions">
@@ -428,7 +429,10 @@ const defaultHandler = {
           </head><body>
             <div class="card">
               <h1>Connect your intervals.icu account</h1>
-              <p class="subtitle">Enter your intervals.icu credentials to get started.</p>
+              <p class="subtitle">
+                Enter your intervals.icu credentials to get started.
+                <a href="/help#intervals-icu">Need help finding them?</a>
+              </p>
               ${errorHtml}
               <form method="POST" action="/configure">
                 <input type="hidden" name="state" value="${escapeHtml(stateId)}">
@@ -542,6 +546,7 @@ const defaultHandler = {
           <style>${PAGE_CSS}</style>
         </head><body>
           <div class="card">
+            <div class="page-actions">${helpLink()}</div>
             <h1>intervals.icu Settings</h1>
             <p class="subtitle">Signed in with ${providerLabel(session.identity.provider)} as <strong>${escapeHtml(identityDisplay(session.identity))}</strong></p>
             <form method="POST" action="/settings/save">
