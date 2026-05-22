@@ -8,9 +8,14 @@ import { registerAthleteTools } from "./tools/athlete.js";
 import { registerEventTools } from "./tools/events.js";
 import { registerWellnessTools } from "./tools/wellness.js";
 import {
-  buildGitHubAuthUrl,
-  exchangeGitHubCode,
-  getGitHubUsername,
+  AuthIdentity,
+  AuthProvider,
+  accountId,
+  buildProviderAuthUrl,
+  credentialsKey,
+  exchangeProviderCode,
+  getProviderIdentity,
+  isAuthProvider,
   validateIntervalsCredentials,
 } from "./auth.js";
 import { encryptApiKey, decryptApiKey } from "./crypto.js";
@@ -20,14 +25,26 @@ export interface Env {
   CREDENTIALS_MASTER_KEY: string;
   GITHUB_CLIENT_ID: string;
   GITHUB_CLIENT_SECRET: string;
+  GOOGLE_CLIENT_ID: string;
+  GOOGLE_CLIENT_SECRET: string;
   OAUTH_KV: KVNamespace;
-  OAUTH_PROVIDER: OAuthHelpers; // injected by OAuthProvider library
+  OAUTH_PROVIDER: OAuthHelpers;
 }
 
 interface StoredCredentials {
   athleteId: string;
   encryptedApiKey: string;
   iv: string;
+}
+
+interface OAuthState {
+  oauthReqInfo: unknown;
+  provider?: AuthProvider;
+}
+
+interface SettingsState {
+  flow: "settings";
+  provider?: AuthProvider;
 }
 
 interface SettingsSession {
@@ -41,14 +58,49 @@ function callbackUrl(request: Request): string {
   return `${url.protocol}//${url.host}/callback`;
 }
 
+function providerClientId(env: Env, provider: AuthProvider): string {
+  return provider === "github" ? env.GITHUB_CLIENT_ID : env.GOOGLE_CLIENT_ID;
+}
+
+function providerClientSecret(env: Env, provider: AuthProvider): string {
+  return provider === "github" ? env.GITHUB_CLIENT_SECRET : env.GOOGLE_CLIENT_SECRET;
+}
+
+function providerLabel(provider: AuthProvider): string {
+  return provider === "github" ? "GitHub" : "Google";
+}
+
+function renderProviderChoicePage(flow: "oauth" | "settings", stateId: string): Response {
+  return new Response(
+    `<!DOCTYPE html><html><head>
+      <meta charset="utf-8">
+      <title>Sign in to intervals.icu MCP</title>
+      <style>${PAGE_CSS}</style>
+    </head><body>
+      <div class="card">
+        <h1>Sign in</h1>
+        <p class="subtitle">Choose how you want to continue.</p>
+        <div class="provider-actions">
+          <a class="btn-provider" href="/login?flow=${flow}&state=${stateId}&provider=github">Continue with ${providerLabel("github")}</a>
+          <a class="btn-provider" href="/login?flow=${flow}&state=${stateId}&provider=google">Continue with ${providerLabel("google")}</a>
+        </div>
+      </div>
+    </body></html>`,
+    {
+      headers: {
+        "Content-Type": "text/html; charset=utf-8",
+        "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'",
+      },
+    }
+  );
+}
+
 // --- Default handler: /authorize and /callback ---
 
 const defaultHandler = {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
 
-    // Step 1 of OAuth flow: parse auth request, store oauthReqInfo in KV,
-    // redirect user to GitHub for authentication
     if (url.pathname === "/authorize") {
       let oauthReqInfo;
       try {
@@ -57,16 +109,43 @@ const defaultHandler = {
         return new Response("Invalid OAuth request", { status: 400 });
       }
 
-      // Generate a random state ID to carry oauthReqInfo through the GitHub round-trip
       const stateId = crypto.randomUUID();
       await env.OAUTH_KV.put(
         `oauth_state:${stateId}`,
-        JSON.stringify(oauthReqInfo),
+        JSON.stringify({ oauthReqInfo }),
+        { expirationTtl: STATE_TTL }
+      );
+
+      return renderProviderChoicePage("oauth", stateId);
+    }
+
+    if (url.pathname === "/login") {
+      const flow = url.searchParams.get("flow");
+      const stateId = url.searchParams.get("state");
+      const providerParam = url.searchParams.get("provider");
+
+      if ((flow !== "oauth" && flow !== "settings") || !stateId || !isAuthProvider(providerParam)) {
+        return new Response("Invalid login request", { status: 400 });
+      }
+
+      const stateKey = flow === "oauth" ? `oauth_state:${stateId}` : `settings_state:${stateId}`;
+      const raw = await env.OAUTH_KV.get(stateKey);
+      if (!raw) return new Response("Invalid or expired state", { status: 400 });
+
+      const state = JSON.parse(raw);
+      await env.OAUTH_KV.put(
+        stateKey,
+        JSON.stringify({ ...state, provider: providerParam }),
         { expirationTtl: STATE_TTL }
       );
 
       return Response.redirect(
-        buildGitHubAuthUrl(env.GITHUB_CLIENT_ID, stateId, callbackUrl(request)),
+        buildProviderAuthUrl(
+          providerParam,
+          providerClientId(env, providerParam),
+          stateId,
+          callbackUrl(request)
+        ),
         302
       );
     }
@@ -82,29 +161,36 @@ const defaultHandler = {
         return new Response("Missing code or state", { status: 400 });
       }
 
-      const oauthReqInfoRaw = await env.OAUTH_KV.get(`oauth_state:${stateId}`);
+      const oauthStateRaw = await env.OAUTH_KV.get(`oauth_state:${stateId}`);
 
       // Settings flow: state was created by /settings
-      if (!oauthReqInfoRaw) {
+      if (!oauthStateRaw) {
         const settingsStateRaw = await env.OAUTH_KV.get(`settings_state:${stateId}`);
         if (!settingsStateRaw) {
           return new Response("Invalid or expired state", { status: 400 });
         }
         await env.OAUTH_KV.delete(`settings_state:${stateId}`);
 
-        let username: string;
-        try {
-          const githubToken = await exchangeGitHubCode(
-            githubCode,
-            env.GITHUB_CLIENT_ID,
-            env.GITHUB_CLIENT_SECRET,
-            callbackUrl(request)
-          );
-          username = await getGitHubUsername(githubToken);
-        } catch {
-          return new Response("GitHub auth failed", { status: 502 });
+        const settingsState = JSON.parse(settingsStateRaw) as SettingsState;
+        if (!isAuthProvider(settingsState.provider)) {
+          return new Response("Invalid or expired state", { status: 400 });
         }
 
+        let identity: AuthIdentity;
+        try {
+          const providerToken = await exchangeProviderCode(
+            settingsState.provider,
+            githubCode,
+            providerClientId(env, settingsState.provider),
+            providerClientSecret(env, settingsState.provider),
+            callbackUrl(request)
+          );
+          identity = await getProviderIdentity(settingsState.provider, providerToken);
+        } catch {
+          return new Response("Provider auth failed", { status: 502 });
+        }
+
+        const username = identity.displayName;
         const sessionToken = crypto.randomUUID();
         await env.OAUTH_KV.put(
           `settings_session:${sessionToken}`,
@@ -122,21 +208,29 @@ const defaultHandler = {
       }
 
       await env.OAUTH_KV.delete(`oauth_state:${stateId}`);
-      const oauthReqInfo = JSON.parse(oauthReqInfoRaw);
+      const oauthState = JSON.parse(oauthStateRaw) as OAuthState;
+      if (!isAuthProvider(oauthState.provider)) {
+        return new Response("Invalid or expired state", { status: 400 });
+      }
+      const oauthReqInfo = oauthState.oauthReqInfo as {
+        scope: string[];
+      };
 
-      let username: string;
+      let identity: AuthIdentity;
       try {
-        const githubToken = await exchangeGitHubCode(
+        const providerToken = await exchangeProviderCode(
+          oauthState.provider,
           githubCode,
-          env.GITHUB_CLIENT_ID,
-          env.GITHUB_CLIENT_SECRET,
+          providerClientId(env, oauthState.provider),
+          providerClientSecret(env, oauthState.provider),
           callbackUrl(request)
         );
-        username = await getGitHubUsername(githubToken);
+        identity = await getProviderIdentity(oauthState.provider, providerToken);
       } catch {
-        return new Response("GitHub auth failed", { status: 502 });
+        return new Response("Provider auth failed", { status: 502 });
       }
 
+      const username = identity.displayName;
 
       // Check if user already has credentials stored
       const existingCreds = await env.OAUTH_KV.get(`credentials:${username}`);
@@ -266,28 +360,24 @@ const defaultHandler = {
       const sessionToken = getSessionToken(request);
 
       if (!sessionToken) {
-        // No session — start GitHub OAuth for settings
         const stateId = crypto.randomUUID();
-        await env.OAUTH_KV.put(`settings_state:${stateId}`, JSON.stringify({ placeholder: true }), {
-          expirationTtl: 600,
-        });
-        return Response.redirect(
-          buildGitHubAuthUrl(env.GITHUB_CLIENT_ID, stateId, callbackUrl(request)),
-          302
+        await env.OAUTH_KV.put(
+          `settings_state:${stateId}`,
+          JSON.stringify({ flow: "settings" }),
+          { expirationTtl: STATE_TTL }
         );
+        return renderProviderChoicePage("settings", stateId);
       }
 
       const session = await env.OAUTH_KV.get(`settings_session:${sessionToken}`, "json") as SettingsSession | null;
       if (!session) {
-        // Session expired in KV — restart GitHub OAuth (clears stale cookie on success)
         const stateId = crypto.randomUUID();
-        await env.OAUTH_KV.put(`settings_state:${stateId}`, JSON.stringify({ placeholder: true }), {
-          expirationTtl: 600,
-        });
-        return Response.redirect(
-          buildGitHubAuthUrl(env.GITHUB_CLIENT_ID, stateId, callbackUrl(request)),
-          302
+        await env.OAUTH_KV.put(
+          `settings_state:${stateId}`,
+          JSON.stringify({ flow: "settings" }),
+          { expirationTtl: STATE_TTL }
         );
+        return renderProviderChoicePage("settings", stateId);
       }
 
       const creds = await env.OAUTH_KV.get(`credentials:${session.username}`, "json") as StoredCredentials | null;

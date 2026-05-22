@@ -9,6 +9,8 @@ function makeEnv(overrides: Partial<any> = {}): any {
     CREDENTIALS_MASTER_KEY: "00".repeat(32),
     GITHUB_CLIENT_ID: "gh_client",
     GITHUB_CLIENT_SECRET: "gh_secret",
+    GOOGLE_CLIENT_ID: "goog_client",
+    GOOGLE_CLIENT_SECRET: "goog_secret",
     OAUTH_KV: {
       get: vi.fn().mockResolvedValue(null),
       put: vi.fn().mockResolvedValue(undefined),
@@ -26,7 +28,7 @@ function makeEnv(overrides: Partial<any> = {}): any {
 }
 
 describe("defaultHandler /authorize", () => {
-  it("redirects to GitHub when oauthReqInfo is valid", async () => {
+  it("renders provider choices when oauthReqInfo is valid", async () => {
     const env = makeEnv();
     env.OAUTH_PROVIDER.parseAuthRequest.mockResolvedValue({
       clientId: "client123",
@@ -40,11 +42,16 @@ describe("defaultHandler /authorize", () => {
     );
     const res = await defaultHandler.fetch(req, env);
 
-    expect(res.status).toBe(302);
-    const location = res.headers.get("Location") ?? "";
-    expect(location).toContain("github.com/login/oauth/authorize");
-    expect(location).toContain("client_id=gh_client");
-    expect(env.OAUTH_KV.put).toHaveBeenCalled();
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    expect(body).toContain("Continue with GitHub");
+    expect(body).toContain("Continue with Google");
+    expect(body).toContain("/login?flow=oauth");
+    expect(env.OAUTH_KV.put).toHaveBeenCalledWith(
+      expect.stringMatching(/^oauth_state:/),
+      expect.stringContaining("client123"),
+      expect.objectContaining({ expirationTtl: 600 })
+    );
   });
 
   it("returns 400 when parseAuthRequest throws", async () => {
@@ -54,6 +61,63 @@ describe("defaultHandler /authorize", () => {
     const req = new Request("https://mcp.example.com/authorize");
     const res = await defaultHandler.fetch(req, env);
     expect(res.status).toBe(400);
+  });
+});
+
+describe("defaultHandler /login", () => {
+  it("rejects unsupported providers", async () => {
+    const env = makeEnv();
+    const req = new Request("https://mcp.example.com/login?flow=oauth&state=s1&provider=email");
+    const res = await defaultHandler.fetch(req, env);
+    expect(res.status).toBe(400);
+  });
+
+  it("returns 400 when oauth state is expired", async () => {
+    const env = makeEnv();
+    env.OAUTH_KV.get.mockResolvedValue(null);
+    const req = new Request("https://mcp.example.com/login?flow=oauth&state=s1&provider=github");
+    const res = await defaultHandler.fetch(req, env);
+    expect(res.status).toBe(400);
+  });
+
+  it("stores GitHub provider in oauth state and redirects to GitHub", async () => {
+    const env = makeEnv();
+    env.OAUTH_KV.get.mockResolvedValue(JSON.stringify({
+      oauthReqInfo: {
+        clientId: "client123",
+        redirectUri: "https://claude.ai/callback",
+        scope: ["mcp"],
+        state: "abc",
+      },
+    }));
+
+    const req = new Request("https://mcp.example.com/login?flow=oauth&state=s1&provider=github");
+    const res = await defaultHandler.fetch(req, env);
+
+    expect(res.status).toBe(302);
+    expect(res.headers.get("Location")).toContain("github.com/login/oauth/authorize");
+    expect(env.OAUTH_KV.put).toHaveBeenCalledWith(
+      "oauth_state:s1",
+      expect.stringContaining('"provider":"github"'),
+      expect.objectContaining({ expirationTtl: 600 })
+    );
+  });
+
+  it("stores Google provider in settings state and redirects to Google", async () => {
+    const env = makeEnv();
+    env.OAUTH_KV.get.mockResolvedValue(JSON.stringify({ flow: "settings" }));
+
+    const req = new Request("https://mcp.example.com/login?flow=settings&state=s1&provider=google");
+    const res = await defaultHandler.fetch(req, env);
+
+    expect(res.status).toBe(302);
+    expect(res.headers.get("Location")).toContain("accounts.google.com/o/oauth2/v2/auth");
+    expect(res.headers.get("Location")).toContain("client_id=goog_client");
+    expect(env.OAUTH_KV.put).toHaveBeenCalledWith(
+      "settings_state:s1",
+      expect.stringContaining('"provider":"google"'),
+      expect.objectContaining({ expirationTtl: 600 })
+    );
   });
 });
 
@@ -276,27 +340,21 @@ describe("defaultHandler /configure", () => {
 describe("defaultHandler /settings", () => {
   afterEach(() => vi.unstubAllGlobals());
 
-  it("GET /settings with no cookie redirects to GitHub", async () => {
+  it("GET /settings with no cookie renders provider choices", async () => {
     const env = makeEnv();
     const req = new Request("https://mcp.example.com/settings");
     const res = await defaultHandler.fetch(req, env);
-    expect(res.status).toBe(302);
-    expect(res.headers.get("Location")).toContain("github.com/login/oauth/authorize");
+
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    expect(body).toContain("Continue with GitHub");
+    expect(body).toContain("Continue with Google");
+    expect(body).toContain("/login?flow=settings");
     expect(env.OAUTH_KV.put).toHaveBeenCalledWith(
       expect.stringMatching(/^settings_state:/),
       expect.any(String),
       expect.objectContaining({ expirationTtl: 600 })
     );
-  });
-
-  it("GET /settings with no cookie redirects to /callback (not /settings/callback)", async () => {
-    const env = makeEnv();
-    const req = new Request("https://mcp.example.com/settings");
-    const res = await defaultHandler.fetch(req, env);
-    expect(res.status).toBe(302);
-    const location = res.headers.get("Location") ?? "";
-    expect(location).toContain("github.com/login/oauth/authorize");
-    expect(location).toContain("redirect_uri=https%3A%2F%2Fmcp.example.com%2Fcallback");
   });
 
   it("GET /settings with valid session shows form", async () => {
@@ -607,4 +665,3 @@ describe("apiHandler", () => {
     expect(res.status).not.toBe(401);
   });
 });
-

@@ -40,5 +40,12 @@ export const PAGE_CSS = `
   }
   .danger-zone p { font-size: 13px; color: #666; margin-bottom: 12px; }
   .error { color: #dc2626; font-size: 13px; margin-bottom: 16px; }
+  .provider-actions { display: grid; gap: 10px; margin-top: 20px; }
+  .btn-provider {
+    display: block; padding: 10px 14px; border: 1px solid #d1d5db;
+    border-radius: 6px; color: #111; text-decoration: none; font-size: 14px;
+    font-weight: 500; text-align: center; background: #fff;
+  }
+  .btn-provider:hover { background: #f9fafb; border-color: #9ca3af; }
   a { color: #2563eb; }
 `;
