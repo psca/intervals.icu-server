@@ -240,10 +240,13 @@ function renderHelpPage(origin: string): Response {
         <section class="doc-section" id="claude">
           <h2>Claude</h2>
           <ol>
-            <li>Add a new remote MCP server in Claude.</li>
-            <li>Use <code>${mcpUrl}</code> as the server URL.</li>
-            <li>Complete the sign-in flow and return to Claude.</li>
+            <li>Open <a href="https://claude.ai/customize" target="_blank" rel="noreferrer">claude.ai/customize</a>.</li>
+            <li>Under <strong>Connectors</strong>, choose <strong>Add custom connector</strong> and use <code>${mcpUrl}</code> as the server URL.</li>
+            <li>Finish the OAuth sign-in flow and return to Claude.</li>
+            <li>Under <strong>Skills</strong>, choose <strong>Create skill</strong>, then <strong>Upload a skill</strong>.</li>
+            <li>Upload the coach skill ZIP: <code>triathlon-training.zip</code>.</li>
           </ol>
+          <p class="subtitle">Claude.ai currently installs the connector and the skill separately for this setup. There is no single bundled install flow on this page today.</p>
         </section>
 
         <section class="doc-section" id="intervals-icu">

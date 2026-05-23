@@ -39,6 +39,14 @@ describe("defaultHandler /help", () => {
     expect(body).toContain('id="claude"');
     expect(body).toContain('id="intervals-icu"');
     expect(body).toContain("/mcp");
+    expect(body).toContain("https://claude.ai/customize");
+    expect(body).toContain("Add custom connector");
+    expect(body).toContain("Connectors");
+    expect(body).toContain("Skills");
+    expect(body).toContain("Create skill");
+    expect(body).toContain("Upload a skill");
+    expect(body).toContain("triathlon-training.zip");
+    expect(body).toContain("installs the connector and the skill separately");
     expect(body).toContain("https://intervals.icu/settings");
     expect(body).toContain("Developer Settings");
   });
