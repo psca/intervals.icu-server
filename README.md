@@ -29,11 +29,10 @@ Start from your chat application, not from this repository.
    ```
    https://intervals-mcp.anthonypoh1998.workers.dev/mcp
    ```
-2. Start a chat that uses the app / connector.
-3. Let the chat application begin the OAuth flow.
-4. Sign in with GitHub or Google when prompted.
-5. On first setup, enter your intervals.icu `Athlete ID` and `API Key`.
-6. Return to the chat and continue normally.
+2. Let the chat application begin the OAuth flow when it needs the connection.
+3. Sign in with GitHub or Google when prompted.
+4. On first setup, enter your intervals.icu `Athlete ID` and `API Key`.
+5. Return to the chat application and continue normally.
 
 ## ChatGPT
 
@@ -43,8 +42,7 @@ Start from your chat application, not from this repository.
    ```
    https://intervals-mcp.anthonypoh1998.workers.dev/mcp
    ```
-4. Start or open the Project where you want to use the connector.
-5. ChatGPT will begin the OAuth flow when it needs the MCP connection.
+4. ChatGPT will begin the OAuth flow when it needs the connection.
 
 ## Claude
 
@@ -53,8 +51,7 @@ Start from your chat application, not from this repository.
    ```
    https://intervals-mcp.anthonypoh1998.workers.dev/mcp
    ```
-3. Start a chat that uses the connector.
-4. Claude will begin the OAuth flow when it needs the MCP connection.
+3. Claude will begin the OAuth flow when it needs the connection.
 
 ## What to expect during sign-in
 
