@@ -285,11 +285,37 @@ function renderHelpPage(origin: string): Response {
   );
 }
 
+function renderLandingPage(): Response {
+  return new Response(
+    `<!DOCTYPE html><html><head>
+      <meta charset="utf-8">
+      <title>intervals-mcp</title>
+      <style>${PAGE_CSS}</style>
+    </head><body>
+      <div class="card">
+        <h1>intervals-mcp</h1>
+        <p class="subtitle">Connect ChatGPT or Claude to your intervals.icu data.</p>
+        <div class="page-actions">${helpLink()}</div>
+      </div>
+    </body></html>`,
+    {
+      headers: {
+        "Content-Type": "text/html; charset=utf-8",
+        "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'",
+      },
+    }
+  );
+}
+
 // --- Default handler: /authorize and /callback ---
 
 const defaultHandler = {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
+
+    if (url.pathname === "/") {
+      return renderLandingPage();
+    }
 
     if (url.pathname === "/help") {
       return renderHelpPage(url.origin);
@@ -783,7 +809,7 @@ const defaultHandler = {
       });
     }
 
-    return new Response("intervals-mcp worker", { status: 200 });
+    return new Response("Not Found", { status: 404 });
   },
 };
 

@@ -28,6 +28,18 @@ function makeEnv(overrides: Partial<any> = {}): any {
 }
 
 describe("defaultHandler /help", () => {
+  it("GET / returns a landing page with a help link", async () => {
+    const env = makeEnv();
+    const req = new Request("https://mcp.example.com/");
+    const res = await defaultHandler.fetch(req, env);
+
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    expect(body).toContain("<title>intervals-mcp</title>");
+    expect(body).toContain("Connect ChatGPT or Claude to your intervals.icu data.");
+    expect(body).toContain('href="/help"');
+  });
+
   it("GET /help returns a public help page with sections", async () => {
     const env = makeEnv();
     const req = new Request("https://mcp.example.com/help");
