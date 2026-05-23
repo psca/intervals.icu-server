@@ -228,6 +228,29 @@ function renderHelpPage(origin: string): Response {
         <p class="subtitle">Use this server with your MCP client and your intervals.icu account.</p>
         <div class="page-actions">${helpLink("/settings", "Settings")}</div>
 
+        <section class="doc-section" id="intervals-icu">
+          <h2>intervals.icu</h2>
+          <ol>
+            <li>Open <a href="https://intervals.icu/settings" target="_blank" rel="noreferrer">intervals.icu/settings</a> and scroll down to <strong>Developer Settings</strong>.</li>
+            <li>
+              Copy your athlete ID and API key from that section.
+              <div class="settings-shot" aria-label="intervals.icu Developer Settings reference">
+                <div class="settings-shot__title">Developer Settings</div>
+                <div class="settings-shot__fields">
+                  <div>
+                    <div class="settings-shot__label">Athlete ID</div>
+                    <div class="settings-shot__value">i12345</div>
+                  </div>
+                  <div>
+                    <div class="settings-shot__label">API Key</div>
+                    <div class="settings-shot__value">(view)</div>
+                  </div>
+                </div>
+              </div>
+            </li>
+          </ol>
+        </section>
+
         <section class="doc-section" id="chatgpt">
           <h2>ChatGPT</h2>
           <ol>
@@ -250,29 +273,6 @@ function renderHelpPage(origin: string): Response {
             <li>Upload the coach skill ZIP: <code>triathlon-training.zip</code>.</li>
           </ol>
           <p class="subtitle">Claude.ai currently installs the connector and the skill separately for this setup. There is no single bundled install flow on this page today.</p>
-        </section>
-
-        <section class="doc-section" id="intervals-icu">
-          <h2>intervals.icu</h2>
-          <ol>
-            <li>Open <a href="https://intervals.icu/settings" target="_blank" rel="noreferrer">intervals.icu/settings</a> and scroll down to <strong>Developer Settings</strong>.</li>
-            <li>
-              Copy your athlete ID and API key from that section.
-              <div class="settings-shot" aria-label="intervals.icu Developer Settings reference">
-                <div class="settings-shot__title">Developer Settings</div>
-                <div class="settings-shot__fields">
-                  <div>
-                    <div class="settings-shot__label">Athlete ID</div>
-                    <div class="settings-shot__value">i12345</div>
-                  </div>
-                  <div>
-                    <div class="settings-shot__label">API Key</div>
-                    <div class="settings-shot__value">(view)</div>
-                  </div>
-                </div>
-              </div>
-            </li>
-          </ol>
         </section>
       </div>
     </body></html>`,

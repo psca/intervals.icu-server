@@ -38,6 +38,14 @@ describe("defaultHandler /help", () => {
     expect(body).toContain('id="chatgpt"');
     expect(body).toContain('id="claude"');
     expect(body).toContain('id="intervals-icu"');
+    const intervalsIndex = body.indexOf('id="intervals-icu"');
+    const chatgptIndex = body.indexOf('id="chatgpt"');
+    const claudeIndex = body.indexOf('id="claude"');
+    expect(intervalsIndex).toBeGreaterThanOrEqual(0);
+    expect(chatgptIndex).toBeGreaterThanOrEqual(0);
+    expect(claudeIndex).toBeGreaterThanOrEqual(0);
+    expect(intervalsIndex).toBeLessThan(chatgptIndex);
+    expect(intervalsIndex).toBeLessThan(claudeIndex);
     expect(body).toContain("/mcp");
     expect(body).toContain("developer mode");
     expect(body).toContain("Project");
