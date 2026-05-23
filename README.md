@@ -3,8 +3,84 @@
 An MCP (Model Context Protocol) server for [intervals.icu](https://intervals.icu) training data. Provides 18 tools for accessing activities, athlete profiles and curves, wellness data, events/workouts, and weather analysis -- designed to be consumed by LLM-powered coaching assistants.
 
 Two modes:
-- **Local (stdio)** -- runs as a local process, no cloud account needed
-- **Remote (Cloudflare Worker)** -- persistent public endpoint with GitHub and Google OAuth configured, plus per-user intervals.icu credentials
+- **Remote managed** -- persistent public endpoint with GitHub and Google OAuth configured, plus per-user intervals.icu credentials
+- **Local stdio** -- runs as a local process, no cloud account needed
+
+## Table of Contents
+
+- [End-user quick start](#end-user-quick-start)
+- [ChatGPT](#chatgpt)
+- [Claude](#claude)
+- [What to expect during sign-in](#what-to-expect-during-sign-in)
+- [Updating your intervals.icu credentials](#updating-your-intervalsicu-credentials)
+- [Developer setup: remote worker](#developer-setup-remote-worker)
+- [Developer setup: local stdio](#developer-setup-local-stdio)
+- [Tools](#tools)
+- [Architecture](#architecture)
+- [Testing](#testing)
+- [Credits](#credits)
+- [License](#license)
+
+## End-user quick start
+
+Start from your chat application, not from this repository.
+
+1. In `ChatGPT` or `Claude`, add the intervals.icu app / connector using:
+   ```
+   https://intervals-mcp.anthonypoh1998.workers.dev/mcp
+   ```
+2. Start a chat that uses the app / connector.
+3. Let the chat application begin the OAuth flow.
+4. Sign in with GitHub or Google when prompted.
+5. On first setup, enter your intervals.icu `Athlete ID` and `API Key`.
+6. Return to the chat and continue normally.
+
+## ChatGPT
+
+1. Open ChatGPT and enable developer mode if your plan requires it for custom apps.
+2. In ChatGPT settings, open `Apps & Connectors`.
+3. Add this custom app URL:
+   ```
+   https://intervals-mcp.anthonypoh1998.workers.dev/mcp
+   ```
+4. Start or open the Project where you want to use the connector.
+5. ChatGPT will begin the OAuth flow when it needs the MCP connection.
+
+## Claude
+
+1. Open Claude and go to `https://claude.ai/customize`.
+2. Under `Connectors`, add a custom connector with:
+   ```
+   https://intervals-mcp.anthonypoh1998.workers.dev/mcp
+   ```
+3. Start a chat that uses the connector.
+4. Claude will begin the OAuth flow when it needs the MCP connection.
+
+## What to expect during sign-in
+
+The sign-in flow always begins from the chat application.
+
+1. ChatGPT or Claude asks to connect the intervals.icu app / connector.
+2. The app opens the hosted OAuth flow in the browser.
+3. You sign in with GitHub or Google.
+4. On first connection, the worker asks for your intervals.icu `Athlete ID` and `API Key`.
+5. After saving those credentials, the chat application returns to the conversation with live tool access.
+
+To find your intervals.icu credentials:
+
+1. Open `https://intervals.icu/settings`
+2. Scroll to `Developer Settings`
+3. Copy your `Athlete ID` and `API Key`
+
+## Updating your intervals.icu credentials
+
+Visit:
+
+```text
+https://intervals-mcp.anthonypoh1998.workers.dev/settings
+```
+
+Use that page to update your intervals.icu athlete ID or API key, or to disconnect your account entirely.
 
 ## Tools
 
@@ -29,52 +105,11 @@ Two modes:
 | `delete_event` | Delete a single event |
 | `delete_events_by_date_range` | Delete all events in a date range |
 
----
+## Developer setup: remote worker
 
-## Option A: Local stdio (quick start)
+This section is for operators who want to deploy their own hosted worker.
 
-No cloud account needed. Runs as a local process, communicates with your MCP client over stdio.
-
-### 1. Prerequisites
-
-- [Node.js](https://nodejs.org/) >= 18
-- intervals.icu API key and Athlete ID (Settings > API in intervals.icu)
-
-### 2. Clone and install
-
-```bash
-git clone https://github.com/psca/intervals.icu-server
-cd intervals.icu-server
-npm install
-```
-
-### 3. Connect your MCP client
-
-Add to your `.mcp.json` (Claude Code / Claude Desktop):
-
-```json
-{
-  "mcpServers": {
-    "intervals-mcp": {
-      "type": "stdio",
-      "command": "npm",
-      "args": ["run", "stdio"],
-      "env": {
-        "API_KEY": "your_intervals_icu_api_key",
-        "ATHLETE_ID": "i12345"
-      }
-    }
-  }
-}
-```
-
-That's it. The MCP client will spawn the server automatically.
-
----
-
-## Option B: Remote Cloudflare Worker (with OAuth)
-
-Runs as a persistent public endpoint. In the current Worker implementation, the login page always shows both GitHub and Google options, so deployments must configure both providers. Users can then authenticate with either provider and connect their own intervals.icu account. Suitable for use with Claude Web or any remote MCP client.
+The current Worker implementation always shows both GitHub and Google login options, so deployments must configure both providers.
 
 ### 1. Prerequisites
 
@@ -161,11 +196,44 @@ On first connection, your MCP client will open a browser window for provider log
 
 GitHub and Google identities are separate accounts. Existing credentials from versions that only used GitHub usernames are not migrated; reconnect and re-enter intervals.icu credentials after upgrading.
 
-### Updating credentials
+## Developer setup: local stdio
 
-Visit `https://intervals-mcp.<your-subdomain>.workers.dev/settings` to update your intervals.icu athlete ID or API key, or to disconnect your account entirely.
+No cloud account needed. Runs as a local process, communicates with your MCP client over stdio.
 
----
+### 1. Prerequisites
+
+- [Node.js](https://nodejs.org/) >= 18
+- intervals.icu API key and Athlete ID (Settings > API in intervals.icu)
+
+### 2. Clone and install
+
+```bash
+git clone https://github.com/psca/intervals.icu-server
+cd intervals.icu-server
+npm install
+```
+
+### 3. Connect your MCP client
+
+Add to your `.mcp.json` (Claude Code / Claude Desktop):
+
+```json
+{
+  "mcpServers": {
+    "intervals-mcp": {
+      "type": "stdio",
+      "command": "npm",
+      "args": ["run", "stdio"],
+      "env": {
+        "API_KEY": "your_intervals_icu_api_key",
+        "ATHLETE_ID": "i12345"
+      }
+    }
+  }
+}
+```
+
+The MCP client will spawn the server automatically.
 
 ## Architecture
 
