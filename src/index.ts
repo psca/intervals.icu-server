@@ -53,6 +53,7 @@ interface SettingsSession {
 }
 
 const STATE_TTL = 60 * 10; // 10 minutes
+const SETTINGS_SESSION_TTL = 60 * 60 * 24 * 7; // 7 days
 
 function callbackUrl(request: Request): string {
   const url = new URL(request.url);
@@ -381,14 +382,14 @@ const defaultHandler = {
         await env.OAUTH_KV.put(
           `settings_session:${sessionToken}`,
           JSON.stringify({ accountId: userAccountId, identity }),
-          { expirationTtl: 3600 }
+          { expirationTtl: SETTINGS_SESSION_TTL }
         );
 
         return new Response(null, {
           status: 302,
           headers: {
             Location: `${url.origin}/settings`,
-            "Set-Cookie": `settings_session=${sessionToken}; Max-Age=3600; HttpOnly; Secure; SameSite=Lax; Path=/settings`,
+            "Set-Cookie": `settings_session=${sessionToken}; Max-Age=${SETTINGS_SESSION_TTL}; HttpOnly; Secure; SameSite=Lax; Path=/settings`,
           },
         });
       }

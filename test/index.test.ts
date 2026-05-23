@@ -303,22 +303,22 @@ describe("defaultHandler /callback", () => {
     expect(env.OAUTH_KV.put).toHaveBeenCalledWith(
       expect.stringMatching(/^settings_session:/),
       expect.stringContaining('"accountId":"github:12345"'),
-      expect.objectContaining({ expirationTtl: 3600 })
+      expect.objectContaining({ expirationTtl: 604800 })
     );
     expect(env.OAUTH_KV.put).toHaveBeenCalledWith(
       expect.stringMatching(/^settings_session:/),
       expect.stringContaining('"provider":"github"'),
-      expect.objectContaining({ expirationTtl: 3600 })
+      expect.objectContaining({ expirationTtl: 604800 })
     );
     expect(env.OAUTH_KV.put).toHaveBeenCalledWith(
       expect.stringMatching(/^settings_session:/),
       expect.stringContaining('"subject":"12345"'),
-      expect.objectContaining({ expirationTtl: 3600 })
+      expect.objectContaining({ expirationTtl: 604800 })
     );
     expect(env.OAUTH_KV.put).toHaveBeenCalledWith(
       expect.stringMatching(/^settings_session:/),
       expect.stringContaining('"displayName":"testuser"'),
-      expect.objectContaining({ expirationTtl: 3600 })
+      expect.objectContaining({ expirationTtl: 604800 })
     );
   });
 
