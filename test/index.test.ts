@@ -39,6 +39,11 @@ describe("defaultHandler /help", () => {
     expect(body).toContain('id="claude"');
     expect(body).toContain('id="intervals-icu"');
     expect(body).toContain("/mcp");
+    expect(body).toContain("developer mode");
+    expect(body).toContain("Project");
+    expect(body).toContain("Add source");
+    expect(body).toContain("TRIATHLON_TRAINING_CHATGPT_PROJECT_SKILL.md");
+    expect(body).toContain("Skills are not available on your ChatGPT plan");
     expect(body).toContain("https://claude.ai/customize");
     expect(body).toContain("Add custom connector");
     expect(body).toContain("Connectors");

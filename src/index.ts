@@ -231,10 +231,13 @@ function renderHelpPage(origin: string): Response {
         <section class="doc-section" id="chatgpt">
           <h2>ChatGPT</h2>
           <ol>
-            <li>Open your MCP server settings in ChatGPT.</li>
-            <li>Add this server URL: <code>${mcpUrl}</code>.</li>
+            <li>Enable <strong>developer mode</strong> in ChatGPT if your plan requires it for custom apps.</li>
+            <li>Open ChatGPT settings, go to <strong>Apps &amp; Connectors</strong>, and add this custom app URL: <code>${mcpUrl}</code>.</li>
             <li>Finish authorization in the browser when prompted.</li>
+            <li>Create a new <strong>Project</strong> in ChatGPT for your coaching chats.</li>
+            <li>In the Project, choose <strong>Add source</strong> and upload <code>TRIATHLON_TRAINING_CHATGPT_PROJECT_SKILL.md</code>.</li>
           </ol>
+          <p class="subtitle">If Skills are not available on your ChatGPT plan, use the Project source file above as the coaching instructions layer.</p>
         </section>
 
         <section class="doc-section" id="claude">
