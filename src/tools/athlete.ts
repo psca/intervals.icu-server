@@ -19,6 +19,10 @@ const HR_CURVE_DURATIONS: [number, string][] = [
 
 const genericObjectSchema = z.record(z.string(), z.unknown());
 
+function dateRangeCurve(start: string, end: string): string {
+  return `r.${start}.${end}`;
+}
+
 function metersPerSecToMinPerKm(mps: number): string {
   if (!mps || mps <= 0) return "N/A";
   const secPerKm = 1000 / mps;
@@ -289,7 +293,7 @@ export function registerAthleteTools(server: McpServer, client: IntervalsClient)
       return withAthleteToolResult("fetching power curves", async () => {
         const data = await client.get<{ list: AthleteRecord[] }>(
           `/athlete/${client.athleteId}/power-curves`,
-          { type: activity_type, oldest: start_date ?? start, newest: end_date ?? end }
+          { type: activity_type, curves: dateRangeCurve(start_date ?? start, end_date ?? end) }
         );
         const curves = data?.list ?? [];
         if (!curves.length) return textResult({ activity_type, curves: [], count: 0 });
@@ -322,7 +326,7 @@ export function registerAthleteTools(server: McpServer, client: IntervalsClient)
       return withAthleteToolResult("fetching pace curves", async () => {
         const data = await client.get<{ list: AthleteRecord[] }>(
           `/athlete/${client.athleteId}/pace-curves`,
-          { type: activity_type, oldest: start_date ?? start, newest: end_date ?? end }
+          { type: activity_type, curves: dateRangeCurve(start_date ?? start, end_date ?? end) }
         );
         const curves = data?.list ?? [];
         if (!curves.length) return textResult({ activity_type, curves: [], count: 0 });
@@ -355,7 +359,7 @@ export function registerAthleteTools(server: McpServer, client: IntervalsClient)
       return withAthleteToolResult("fetching HR curves", async () => {
         const data = await client.get<{ list: AthleteRecord[] }>(
           `/athlete/${client.athleteId}/hr-curves`,
-          { type: activity_type, oldest: start_date ?? start, newest: end_date ?? end }
+          { type: activity_type, curves: dateRangeCurve(start_date ?? start, end_date ?? end) }
         );
         const curves = data?.list ?? [];
         if (!curves.length) return textResult({ activity_type, curves: [], count: 0 });

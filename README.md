@@ -1,6 +1,6 @@
 # intervals-mcp
 
-An MCP (Model Context Protocol) server for [intervals.icu](https://intervals.icu) training data. Provides 18 tools for accessing activities, athlete profiles and curves, wellness data, events/workouts, and weather analysis -- designed to be consumed by LLM-powered coaching assistants.
+An MCP (Model Context Protocol) server for [intervals.icu](https://intervals.icu) training data. Provides 22 tools for accessing activities, athlete profiles and curves, wellness data, events/workouts, weather analysis, and compact athlete-analysis workflows -- designed to be consumed by LLM-powered coaching assistants.
 
 Two modes:
 - **Remote managed** -- persistent public endpoint with GitHub and Google OAuth configured, plus per-user intervals.icu credentials
@@ -84,6 +84,10 @@ Use that page to update your intervals.icu athlete ID or API key, or to disconne
 | Tool | Description |
 |---|---|
 | `get_activities` | List activities with date range and filtering |
+| `get_weekly_snapshot` | Current Monday-Sunday activities and planned calendar events, grouped by day |
+| `compare_similar_activities` | Compare an activity to compatible recent sessions with explicit evidence and caveats |
+| `get_training_readiness` | Compact advisory recovery, discipline-load, and upcoming-demand snapshot |
+| `get_discipline_trends` | 4-, 8-, and 12-week swim, bike, and run trends with date-bounded curve evidence |
 | `get_activity_details` | Detailed metrics for a single activity |
 | `get_activity_intervals` | Interval/lap data for structured workouts |
 | `get_activity_streams` | Full time-series data (power, HR, etc.) |
