@@ -84,10 +84,10 @@ Use that page to update your intervals.icu athlete ID or API key, or to disconne
 | Tool | Description |
 |---|---|
 | `get_activities` | List activities with date range and filtering |
-| `get_weekly_snapshot` | Current Monday-Sunday activities and planned calendar events, grouped by day |
-| `compare_similar_activities` | Compare an activity to compatible recent sessions with explicit evidence and caveats |
-| `get_training_readiness` | Compact advisory recovery, discipline-load, and upcoming-demand snapshot |
-| `get_discipline_trends` | 4-, 8-, and 12-week swim, bike, and run trends with date-bounded curve evidence |
+| `get_weekly_snapshot` | Athlete-local week progress, pairing-derived completion status, and completed/planned totals by discipline |
+| `compare_similar_activities` | Compatible-session comparison with recent, median, and per-metric evidence; bike speed affects verdicts only on the same identified route |
+| `get_training_readiness` | HRV/RHR trends, actionable signals, future demand, and discipline load states using server-estimated CTL/ATL/TSB |
+| `get_discipline_trends` | 4-, 8-, and 12-week volume, fitness, efficiency, durability, and context-compatible curve evidence; load direction is not fitness direction |
 | `get_activity_details` | Detailed metrics for a single activity |
 | `get_activity_intervals` | Interval/lap data for structured workouts |
 | `get_activity_streams` | Full time-series data (power, HR, etc.) |

@@ -1,5 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { canonicalDiscipline, numberValue } from "../analysis.js";
 import { IntervalsClient } from "../client.js";
 import { errorResult, structuredResult } from "./result.js";
 
@@ -29,7 +30,7 @@ function assertTimezone(timezone: string): void {
   }
 }
 
-function localDate(now: Date, timezone: string): string {
+export function localDate(now: Date, timezone: string): string {
   assertTimezone(timezone);
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone: timezone,
@@ -91,7 +92,30 @@ function truncate(value: unknown, max = 2000): { value: string | null; truncated
     : { value, truncated: false };
 }
 
-function activitySummary(activity: RecordData): RecordData {
+function ratio(completed: number | null, planned: number | null): number | null {
+  return completed == null || planned == null || planned <= 0 ? null : completed / planned;
+}
+
+function pairedComparison(activity: RecordData, event: RecordData): RecordData {
+  const completedDuration = numberValue(activity.moving_time); const plannedDuration = numberValue(event.moving_time);
+  const completedLoad = numberValue(activity.icu_training_load); const plannedLoad = numberValue(event.icu_training_load ?? event.load_target);
+  const completedIntensity = numberValue(activity.icu_intensity); const plannedIntensity = numberValue(event.icu_intensity);
+  return {
+    planned_duration_seconds: plannedDuration, completed_duration_seconds: completedDuration,
+    duration_absolute_delta_seconds: completedDuration == null || plannedDuration == null ? null : Math.abs(completedDuration - plannedDuration),
+    duration_ratio: ratio(completedDuration, plannedDuration),
+    planned_load: plannedLoad, completed_load: completedLoad,
+    load_absolute_delta: completedLoad == null || plannedLoad == null ? null : Math.abs(completedLoad - plannedLoad),
+    load_ratio: ratio(completedLoad, plannedLoad),
+    intensity_comparison: completedIntensity == null || plannedIntensity == null ? null : {
+      planned: plannedIntensity, completed: completedIntensity,
+      absolute_delta: Math.abs(completedIntensity - plannedIntensity), ratio: ratio(completedIntensity, plannedIntensity),
+    },
+  };
+}
+
+function activitySummary(activity: RecordData, event: RecordData | null): RecordData {
+  const paired = activity.paired_event_id != null;
   return {
     id: String(activity.id ?? ""), name: activity.name ?? null, type: activity.type ?? null,
     start_date_local: activity.start_date_local ?? null, moving_time_seconds: activity.moving_time ?? null,
@@ -102,28 +126,64 @@ function activitySummary(activity: RecordData): RecordData {
     weighted_power_watts: activity.icu_weighted_avg_watts ?? null,
     pace_mps: activity.pace ?? null, elevation_gain_meters: activity.total_elevation_gain ?? null,
     indoor: activity.trainer ?? null, paired_event_id: activity.paired_event_id ?? null,
-    compliance: activity.compliance ?? null,
+    status: paired ? "COMPLETED" : "UNPAIRED_COMPLETION",
+    compliance: paired ? activity.compliance ?? null : null,
+    paired_comparison: paired && event ? pairedComparison(activity, event) : null,
   };
 }
 
-function eventSummary(event: RecordData): RecordData {
+function eventSummary(event: RecordData, activity: RecordData | null, today: string): RecordData {
   const description = truncate(event.description);
+  const paired = activity != null;
   return {
     id: String(event.id ?? ""), name: event.name ?? null, type: event.type ?? null,
     category: event.category ?? null, start_date_local: event.start_date_local ?? null,
     moving_time_seconds: event.moving_time ?? null, distance_meters: event.distance ?? null,
     training_load: event.icu_training_load ?? event.load_target ?? null,
     intensity: event.icu_intensity ?? null, indoor: event.indoor ?? null, target: event.target ?? null,
-    tags: Array.isArray(event.tags) ? event.tags : [], paired_activity_id: event.paired_activity_id ?? null,
+    tags: Array.isArray(event.tags) ? event.tags : [], paired_activity_id: paired ? String(activity.id ?? "") : event.paired_activity_id ?? null,
     description: description.value, description_truncated: description.truncated,
+    status: paired ? "COMPLETED" : (recordDate(event) ?? today) < today ? "MISSED" : "PLANNED",
+    paired_comparison: paired ? pairedComparison(activity, event) : null,
   };
+}
+
+type Totals = { duration_seconds: number; load: number; distance_meters: number };
+
+function emptyTotals(): Totals { return { duration_seconds: 0, load: 0, distance_meters: 0 }; }
+
+function addRecordTotals(total: Totals, record: RecordData, planned: boolean): void {
+  total.duration_seconds += numberValue(record.moving_time) ?? 0;
+  total.load += numberValue(record.icu_training_load ?? (planned ? record.load_target : null)) ?? 0;
+  total.distance_meters += numberValue(record.distance ?? record.icu_distance) ?? 0;
+}
+
+function aggregateTotals(activities: RecordData[], events: RecordData[]): RecordData {
+  const overall = { completed: emptyTotals(), planned: emptyTotals() };
+  const byDiscipline = Object.fromEntries(["BIKE", "RUN", "SWIM", "OTHER"].map(key => [key, { completed: emptyTotals(), planned: emptyTotals() }])) as Record<string, { completed: Totals; planned: Totals }>;
+  for (const activity of activities) {
+    const discipline = canonicalDiscipline(activity.type) ?? "OTHER";
+    addRecordTotals(overall.completed, activity, false); addRecordTotals(byDiscipline[discipline].completed, activity, false);
+  }
+  for (const event of events) {
+    const discipline = canonicalDiscipline(event.type) ?? "OTHER";
+    addRecordTotals(overall.planned, event, true); addRecordTotals(byDiscipline[discipline].planned, event, true);
+  }
+  return { activity_count: activities.length, planned_event_count: events.length, overall, by_discipline: byDiscipline };
+}
+
+export function weekProgress(range: WeekRange, today: string): { today: string; elapsed_days: number; remaining_days: number; week_status: "UPCOMING" | "IN_PROGRESS" | "COMPLETE" } {
+  if (today < range.weekStart) return { today, elapsed_days: 0, remaining_days: 7, week_status: "UPCOMING" };
+  if (today > range.weekEnd) return { today, elapsed_days: 7, remaining_days: 0, week_status: "COMPLETE" };
+  const elapsed = Math.floor((new Date(`${today}T00:00:00Z`).getTime() - new Date(`${range.weekStart}T00:00:00Z`).getTime()) / 86_400_000) + 1;
+  return { today, elapsed_days: elapsed, remaining_days: 7 - elapsed, week_status: "IN_PROGRESS" };
 }
 
 export function registerWeeklySnapshotTool(server: McpServer, client: IntervalsClient): void {
   server.registerTool(
     "get_weekly_snapshot",
     {
-      description: "Get the athlete's Monday-Sunday calendar snapshot, grouping completed activities and all planned calendar events by day. Defaults to the current week in the athlete's Intervals.icu timezone.",
+      description: "Get an athlete-local Monday-Sunday snapshot with completed/planned totals and pairing-derived COMPLETED, UNPAIRED_COMPLETION, MISSED, or PLANNED statuses. Compliance is only reported for paired activities.",
       inputSchema: {
         week_start: z.string().optional().describe("Monday date YYYY-MM-DD (default: current week in athlete timezone)"),
       },
@@ -131,6 +191,10 @@ export function registerWeeklySnapshotTool(server: McpServer, client: IntervalsC
         week_start: z.string(),
         week_end: z.string(),
         timezone: z.string(),
+        today: z.string(),
+        elapsed_days: z.number().int(),
+        remaining_days: z.number().int(),
+        week_status: z.enum(["UPCOMING", "IN_PROGRESS", "COMPLETE"]),
         days: z.array(z.object({
           date: z.string(),
           activities: z.array(z.record(z.string(), z.unknown())),
@@ -138,10 +202,7 @@ export function registerWeeklySnapshotTool(server: McpServer, client: IntervalsC
           activity_count: z.number().int(),
           planned_event_count: z.number().int(),
         })),
-        totals: z.object({
-          activity_count: z.number().int(),
-          planned_event_count: z.number().int(),
-        }),
+        totals: z.record(z.string(), z.unknown()),
       },
     },
     async ({ week_start }) => {
@@ -151,6 +212,7 @@ export function registerWeeklySnapshotTool(server: McpServer, client: IntervalsC
         if (typeof timezone !== "string" || !timezone) throw new Error("Athlete profile has no valid timezone");
 
         const range = getWeekRange(timezone, week_start);
+        const today = localDate(new Date(), timezone);
         const [activities, plannedEvents] = await Promise.all([
           client.get<RecordData[]>(`/athlete/${client.athleteId}/activities`, {
             oldest: range.weekStart,
@@ -161,19 +223,20 @@ export function registerWeeklySnapshotTool(server: McpServer, client: IntervalsC
             newest: range.weekEnd,
           }),
         ]);
+        const eventById = new Map((plannedEvents ?? []).map(event => [String(event.id ?? ""), event]));
+        const activityByEventId = new Map((activities ?? []).filter(activity => activity.paired_event_id != null).map(activity => [String(activity.paired_event_id), activity]));
         const days = groupWeekRecords(range, activities ?? [], plannedEvents ?? []).map(day => ({
           ...day,
-          activities: day.activities.map(activitySummary),
-          planned_events: day.planned_events.map(eventSummary),
+          activities: day.activities.map(activity => activitySummary(activity, activity.paired_event_id == null ? null : eventById.get(String(activity.paired_event_id)) ?? null)),
+          planned_events: day.planned_events.map(event => eventSummary(event, activityByEventId.get(String(event.id ?? "")) ?? null, today)),
         }));
-        const totals = {
-          activity_count: activities?.length ?? 0,
-          planned_event_count: plannedEvents?.length ?? 0,
-        };
+        const totals = aggregateTotals(activities ?? [], plannedEvents ?? []);
+        const progress = weekProgress(range, today);
         return structuredResult(`Week ${range.weekStart}–${range.weekEnd}: ${totals.activity_count} activities, ${totals.planned_event_count} planned events.`, {
           week_start: range.weekStart,
           week_end: range.weekEnd,
           timezone,
+          ...progress,
           days,
           totals,
         });
