@@ -106,6 +106,13 @@ Use that page to update your intervals.icu athlete ID or API key, or to disconne
 | `delete_event` | Delete a single event |
 | `delete_events_by_date_range` | Delete all events in a date range |
 
+### Analysis semantics
+
+- `compare_similar_activities` selects only candidates with compatibility at least 70. Directional overall verdicts require at least two comparisons and at least two directional metrics with 60% agreement. Cycling speed is evidence only unless both activities use the same non-null route ID in `SAME_ROUTE` mode.
+- `get_training_readiness` is advisory. Its per-discipline CTL, ATL, and TSB are server estimates from activity load; a positive TSB caused by `LOW_RECENT_TRAINING` is not a positive readiness signal.
+- `get_discipline_trends` separates volume from fitness. `INCREASED`, `DECREASED`, and `STABLE` describe load direction only. Races and unusually long sessions still count toward volume, but are excluded from ordinary efficiency cohorts.
+- `get_weekly_snapshot` derives pairing from `activity.paired_event_id`. It reports only `COMPLETED`, `UNPAIRED_COMPLETION`, `MISSED`, and `PLANNED`; unpaired activity compliance is `null`, and event descriptions are capped at 2,000 characters.
+
 ## Developer setup: remote worker
 
 This section is for operators who want to deploy their own hosted worker.
