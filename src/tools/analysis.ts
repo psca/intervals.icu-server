@@ -231,11 +231,17 @@ function efficiencyCohort(items: R[]): { included: R[]; excluded: R[] } {
   return { included, excluded };
 }
 
-function trendForMetric(current: R[], previous: R[], field: string, minimum: number, lowerIsBetter = false, threshold = 3): R {
+function trendForMetric(
+  current: R[], previous: R[], field: string, minimum: number,
+  metric: string, unit: string, lowerIsBetter = false, threshold = 3,
+): R {
   const currentValues = current.flatMap(item => numberValue(item[field]) == null ? [] : [numberValue(item[field])!]);
   const previousValues = previous.flatMap(item => numberValue(item[field]) == null ? [] : [numberValue(item[field])!]);
-  if (!hasSufficientEvidence(currentValues.length, previousValues.length, minimum)) return { status: "INSUFFICIENT_DATA", current_value: median(currentValues), previous_value: median(previousValues), current_count: currentValues.length, previous_count: previousValues.length };
-  return { ...metricVerdict(median(currentValues), median(previousValues), threshold, lowerIsBetter), current_count: currentValues.length, previous_count: previousValues.length };
+  const currentValue = median(currentValues); const previousValue = median(previousValues);
+  const basis = { metric, unit, lower_is_better: lowerIsBetter, current_value: currentValue, previous_value: previousValue, current_count: currentValues.length, previous_count: previousValues.length, minimum_required: minimum };
+  if (!hasSufficientEvidence(currentValues.length, previousValues.length, minimum)) return { ...basis, change_percent: percentChange(currentValue, previousValue), status: "INSUFFICIENT_DATA" };
+  const result = metricVerdict(currentValue, previousValue, threshold, lowerIsBetter);
+  return { ...basis, change_percent: result.change_percent, status: result.status };
 }
 
 type CurvePoint = { axis: number; value: number | null; activity_id: string | null; start_date_local: unknown; activity: R | null };
@@ -258,7 +264,7 @@ function curveBests(data: R, pace: boolean, start: string, end: string, activiti
   return { axis_type: pace ? "distance_meters" : "duration_seconds", bests, activity_count: curves.length };
 }
 
-function thresholdComparison(current: ReturnType<typeof curveBests>, previous: ReturnType<typeof curveBests>, discipline: Discipline): R {
+function thresholdComparison(current: ReturnType<typeof curveBests>, previous: ReturnType<typeof curveBests>, discipline: Discipline, minimum: number): R {
   const points = current.bests.map((point, index) => {
     const prior = previous.bests[index];
     if (point.value == null || prior?.value == null || !point.activity || !prior.activity) return { axis: point.axis, current_value: point.value, previous_value: prior?.value ?? null, current_activity_id: point.activity_id, previous_activity_id: prior?.activity_id ?? null, status: "INSUFFICIENT_DATA" };
@@ -266,10 +272,29 @@ function thresholdComparison(current: ReturnType<typeof curveBests>, previous: R
     if (!context.comparable) return { axis: point.axis, current_value: point.value, previous_value: prior.value, current_activity_id: point.activity_id, previous_activity_id: prior.activity_id, status: "NOT_COMPARABLE", context };
     return { axis: point.axis, current_activity_id: point.activity_id, previous_activity_id: prior.activity_id, ...metricVerdict(point.value, prior.value, 3, discipline !== "BIKE"), context };
   });
+  const evidenceSufficient = hasSufficientEvidence(current.activity_count, previous.activity_count, minimum);
   const directional = points.map(point => String(point.status)).filter(status => status === "IMPROVED" || status === "DECLINED");
   const improved = directional.filter(status => status === "IMPROVED").length; const declined = directional.length - improved;
-  const status = directional.length === 0 ? (points.some(point => point.status === "STABLE") ? "STABLE" : points.some(point => point.status === "NOT_COMPARABLE") ? "NOT_COMPARABLE" : "INSUFFICIENT_DATA") : improved > declined ? "IMPROVED" : declined > improved ? "DECLINED" : "MIXED";
-  return { status, points };
+  const status = !evidenceSufficient
+    ? "INSUFFICIENT_DATA"
+    : improved > 0 && declined > 0
+      ? "MIXED"
+      : improved > 0
+        ? "IMPROVED"
+        : declined > 0
+          ? "DECLINED"
+          : points.some(point => point.status === "STABLE")
+            ? "STABLE"
+            : points.some(point => point.status === "NOT_COMPARABLE")
+              ? "NOT_COMPARABLE"
+              : "INSUFFICIENT_DATA";
+  return {
+    metric: discipline === "BIKE" ? "POWER_CURVE" : "PACE_CURVE_ELAPSED_TIME",
+    unit: discipline === "BIKE" ? "WATTS" : "SECONDS",
+    lower_is_better: discipline !== "BIKE",
+    status, current_activity_count: current.activity_count, previous_activity_count: previous.activity_count,
+    minimum_required: minimum, evidence_sufficient: evidenceSufficient, points,
+  };
 }
 
 async function safeResult(label: string, fn: () => Promise<ToolTextResult>): Promise<ToolTextResult> {
@@ -401,14 +426,19 @@ export function registerAnalysisTools(server: McpServer, client: IntervalsClient
         const currentSummary = periodSummary(current); const previousSummary = periodSummary(previous); const volume = loadTrend(numberValue(currentSummary.training_load) ?? 0, numberValue(previousSummary.training_load) ?? 0);
         const currentCohort = efficiencyCohort(current); const previousCohort = efficiencyCohort(previous);
         const fitnessField = discipline === "BIKE" ? "icu_weighted_avg_watts" : "pace";
-        const fitness = trendForMetric(currentCohort.included, previousCohort.included, fitnessField, minimum_sessions_per_period);
-        const efficiency = include_efficiency_trends ? trendForMetric(currentCohort.included, previousCohort.included, "icu_efficiency_factor", minimum_sessions_per_period) : { status: "NOT_REQUESTED" };
+        const fitness = trendForMetric(
+          currentCohort.included, previousCohort.included, fitnessField, minimum_sessions_per_period,
+          discipline === "BIKE" ? "WEIGHTED_POWER" : "PACE", discipline === "BIKE" ? "WATTS" : "METERS_PER_SECOND",
+        );
+        const efficiency = include_efficiency_trends
+          ? trendForMetric(currentCohort.included, previousCohort.included, "icu_efficiency_factor", minimum_sessions_per_period, "EFFICIENCY_FACTOR", "RATIO")
+          : { metric: "EFFICIENCY_FACTOR", unit: "RATIO", lower_is_better: false, status: "NOT_REQUESTED" };
         const longSeconds = discipline === "BIKE" ? 5400 : discipline === "RUN" ? 3600 : 2700;
         const currentLong = current.filter(activity => (numberValue(activity.moving_time) ?? 0) >= longSeconds && numberValue(activity.decoupling) != null);
         const previousLong = previous.filter(activity => (numberValue(activity.moving_time) ?? 0) >= longSeconds && numberValue(activity.decoupling) != null);
         const durability = includeDurability(include_durability_trends, currentLong, previousLong);
         const currentCurve = curveBests(combined, discipline !== "BIKE", currentStart, currentEnd, activityMap); const previousCurve = curveBests(combined, discipline !== "BIKE", previousStart, previousEnd, activityMap);
-        const threshold = thresholdComparison(currentCurve, previousCurve, discipline);
+        const threshold = thresholdComparison(currentCurve, previousCurve, discipline, minimum_sessions_per_period);
         return {
           weeks, current_start: currentStart, current_end: currentEnd, previous_start: previousStart, previous_end: previousEnd,
           current: currentSummary, previous: previousSummary, volume_trend: volume,
@@ -423,17 +453,22 @@ export function registerAnalysisTools(server: McpServer, client: IntervalsClient
           curve_evidence: { current: stripCurveActivities(currentCurve), previous: stripCurveActivities(previousCurve) },
         };
       });
-      const summaryWindow = windows.find(window => window.weeks === Math.max(...windows_weeks)) ?? windows[0];
-      return { discipline, summary: disciplineSummary(summaryWindow, minimum_sessions_per_period), windows };
+      const summaryWindowWeeks = Math.min(...windows_weeks);
+      const summaryWindow = windows.find(window => window.weeks === summaryWindowWeeks) ?? windows[0];
+      return { discipline, summary: disciplineSummary(summaryWindow, minimum_sessions_per_period), summary_window_weeks: summaryWindow?.weeks ?? null, windows };
     }));
     return structuredResult(`Discipline trends calculated for ${disciplines.join(", ")}.`, { disciplines: results, confidence: (activities?.length ?? 0) >= 30 ? "MODERATE" : "LOW", caveats: ["Volume includes every activity; load direction is not a fitness verdict.", "Efficiency cohorts exclude races and sessions longer than twice the period median.", "Efficiency and durability use summary metrics only; streams were not fetched.", "Curve comparisons are directional only when sport-specific contexts are compatible; cycling position is used only from explicit tags."] });
   }));
 }
 
 function includeDurability(requested: boolean, current: R[], previous: R[]): R {
-  if (!requested) return { status: "NOT_REQUESTED", current_qualifying_count: current.length, previous_qualifying_count: previous.length, current_activity_ids: current.map(item => String(item.id ?? "")), previous_activity_ids: previous.map(item => String(item.id ?? "")) };
-  const result = hasSufficientEvidence(current.length, previous.length, 3) ? metricVerdict(median(current.map(item => numberValue(item.decoupling)!).filter(value => value != null)), median(previous.map(item => numberValue(item.decoupling)!).filter(value => value != null)), 1.5, true) : { status: "INSUFFICIENT_DATA" };
-  return { ...result, current_qualifying_count: current.length, previous_qualifying_count: previous.length, current_activity_ids: current.map(item => String(item.id ?? "")), previous_activity_ids: previous.map(item => String(item.id ?? "")) };
+  const currentValue = median(current.map(item => numberValue(item.decoupling)!).filter(value => value != null));
+  const previousValue = median(previous.map(item => numberValue(item.decoupling)!).filter(value => value != null));
+  const basis = { metric: "DECOUPLING", unit: "PERCENT", lower_is_better: true, current_value: currentValue, previous_value: previousValue, current_qualifying_count: current.length, previous_qualifying_count: previous.length, minimum_required: 3, current_activity_ids: current.map(item => String(item.id ?? "")), previous_activity_ids: previous.map(item => String(item.id ?? "")) };
+  if (!requested) return { ...basis, change_percent: percentChange(currentValue, previousValue), status: "NOT_REQUESTED" };
+  if (!hasSufficientEvidence(current.length, previous.length, 3)) return { ...basis, change_percent: percentChange(currentValue, previousValue), status: "INSUFFICIENT_DATA" };
+  const result = metricVerdict(currentValue, previousValue, 1.5, true);
+  return { ...basis, change_percent: result.change_percent, status: result.status };
 }
 
 function stripCurveActivities(curve: ReturnType<typeof curveBests>): R {
@@ -445,7 +480,10 @@ function disciplineSummary(window: R, minimum: number): string {
   const currentSessions = numberValue(current.sessions) ?? 0; const previousSessions = numberValue(previous.sessions) ?? 0;
   if (currentSessions < minimum && previousSessions < minimum) return "INSUFFICIENT_DATA";
   if (previousSessions >= minimum && currentSessions < minimum && (numberValue(current.training_load) ?? 0) <= .5 * (numberValue(previous.training_load) ?? 0)) return "LOW_RECENT_TRAINING";
+  if (!hasSufficientEvidence(currentSessions, previousSessions, minimum)) return "INSUFFICIENT_DATA";
   const statuses = [window.fitness_trend, window.efficiency_trend, window.durability_trend, window.threshold_evidence].map(value => String((value as R).status));
+  const usable = statuses.filter(status => status === "IMPROVED" || status === "DECLINED" || status === "STABLE");
+  if (!usable.length) return "INSUFFICIENT_DATA";
   const improved = statuses.filter(status => status === "IMPROVED").length; const declined = statuses.filter(status => status === "DECLINED").length;
   if (improved >= 2 && declined === 0) return "RECENTLY_IMPROVING";
   if (declined >= 2 && improved === 0) return "DECLINING";

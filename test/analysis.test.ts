@@ -184,6 +184,10 @@ describe("get_discipline_trends", () => {
     expect(window).toMatchObject({ current_start: "2026-06-13", current_end: "2026-07-10", previous_start: "2026-05-16", previous_end: "2026-06-12" });
     expect(window.volume_trend.status).toBe("INCREASED");
     expect(window.volume_trend.status).not.toMatch(/IMPROVED|DECLINED/);
+    expect(window.fitness_trend).toMatchObject({ metric: "WEIGHTED_POWER", unit: "WATTS", current_value: 150, previous_value: 150 });
+    expect(window.fitness_trend).not.toHaveProperty("target");
+    expect(window.efficiency_trend).toMatchObject({ metric: "EFFICIENCY_FACTOR", unit: "RATIO" });
+    expect(window.durability_trend).toMatchObject({ metric: "DECOUPLING", unit: "PERCENT" });
     expect(window.evidence.efficiency_cohort.current_excluded[0]).toMatchObject({ activity_id: "c-race" });
     expect(window.durability_trend).toMatchObject({ status: "INSUFFICIENT_DATA", current_qualifying_count: 1, previous_qualifying_count: 0 });
     expect(window.threshold_evidence.points[0].status).toBe("NOT_COMPARABLE");
@@ -200,5 +204,59 @@ describe("get_discipline_trends", () => {
     ]) : Promise.resolve({ secs: [300], curves: [] }));
     const result = await tools.get_discipline_trends.handler({ lookback_days: 28, disciplines: ["BIKE"], windows_weeks: [4], include_efficiency_trends: true, include_durability_trends: true, minimum_sessions_per_period: 3 });
     expect(result.structuredContent.disciplines[0].summary).toBe("LOW_RECENT_TRAINING");
+  });
+
+  it("bases the top-level summary on the shortest requested window", async () => {
+    vi.useFakeTimers(); vi.setSystemTime(new Date("2026-07-10T12:00:00Z"));
+    const { client, tools } = setup();
+    const run = (id: string, date: string, pace: number, efficiency: number) => ({
+      id, type: "Run", trainer: false, start_date_local: `${date}T07:00:00`, moving_time: 1800,
+      icu_training_load: 30, pace, icu_efficiency_factor: efficiency,
+    });
+    client.get.mockImplementation((path: string) => path.endsWith("/activities") ? Promise.resolve([
+      run("current-1", "2026-07-09", 2, 1), run("current-2", "2026-07-01", 2, 1), run("current-3", "2026-06-20", 2, 1),
+      run("prior-1", "2026-06-10", 3, 2), run("prior-2", "2026-06-01", 3, 2), run("prior-3", "2026-05-20", 3, 2),
+      run("old-1", "2026-04-10", 1, .5), run("old-2", "2026-03-10", 1, .5), run("old-3", "2026-02-10", 1, .5),
+    ]) : Promise.resolve({ distances: [1000], curves: [] }));
+
+    const result = await tools.get_discipline_trends.handler({ lookback_days: 84, disciplines: ["RUN"], windows_weeks: [12, 4], include_efficiency_trends: true, include_durability_trends: true, minimum_sessions_per_period: 3 });
+    const discipline = result.structuredContent.disciplines[0];
+    const recent = discipline.windows.find((window: Record<string, unknown>) => window.weeks === 4);
+    const long = discipline.windows.find((window: Record<string, unknown>) => window.weeks === 12);
+    expect(recent.fitness_trend.status).toBe("DECLINED");
+    expect(recent.efficiency_trend.status).toBe("DECLINED");
+    expect(long.fitness_trend.status).toBe("IMPROVED");
+    expect(long.efficiency_trend.status).toBe("IMPROVED");
+    expect(discipline).toMatchObject({ summary: "DECLINING", summary_window_weeks: 4 });
+  });
+
+  it("keeps sparse swim summaries and threshold aggregates insufficient", async () => {
+    vi.useFakeTimers(); vi.setSystemTime(new Date("2026-07-10T12:00:00Z"));
+    const { client, tools } = setup();
+    const swims = [
+      { id: "s1", type: "Swim", pool_length: 25, start_date_local: "2026-06-01T07:00:00", moving_time: 1800, icu_training_load: 30, pace: .7 },
+      { id: "s2", type: "Swim", pool_length: 25, start_date_local: "2026-05-10T07:00:00", moving_time: 1800, icu_training_load: 30, pace: .7 },
+      { id: "s3", type: "Swim", pool_length: 25, start_date_local: "2026-05-01T07:00:00", moving_time: 1800, icu_training_load: 30, pace: .7 },
+      { id: "p1", type: "Swim", pool_length: 25, start_date_local: "2026-03-01T07:00:00", moving_time: 1800, icu_training_load: 30, pace: .6 },
+    ];
+    client.get.mockImplementation((path: string, params: Record<string, string>) => {
+      if (path.endsWith("/activities")) return Promise.resolve(swims);
+      if (params.newest === "2026-07-10") return Promise.resolve({ distances: [200, 400], curves: [
+        { id: "s1", start_date_local: "2026-06-01", secs: [180, 380] },
+        { id: "s2", start_date_local: "2026-05-10", secs: [175, 370] },
+        { id: "s3", start_date_local: "2026-05-01", secs: [170, 360] },
+      ] });
+      return Promise.resolve({ distances: [200, 400], curves: [{ id: "p1", start_date_local: "2026-03-01", secs: [190, 390] }] });
+    });
+
+    const result = await tools.get_discipline_trends.handler({ lookback_days: 84, disciplines: ["SWIM"], windows_weeks: [4, 12], include_efficiency_trends: true, include_durability_trends: true, minimum_sessions_per_period: 3 });
+    const discipline = result.structuredContent.disciplines[0];
+    const long = discipline.windows.find((window: Record<string, unknown>) => window.weeks === 12);
+    expect(discipline).toMatchObject({ summary: "INSUFFICIENT_DATA", summary_window_weeks: 4 });
+    expect(long.threshold_evidence).toMatchObject({
+      metric: "PACE_CURVE_ELAPSED_TIME", unit: "SECONDS", status: "INSUFFICIENT_DATA",
+      current_activity_count: 3, previous_activity_count: 1, minimum_required: 3, evidence_sufficient: false,
+    });
+    expect(long.threshold_evidence.points.some((point: Record<string, unknown>) => point.status === "IMPROVED")).toBe(true);
   });
 });
