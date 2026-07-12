@@ -11,6 +11,7 @@ import { registerEventTools } from "./tools/events.js";
 import { registerWellnessTools } from "./tools/wellness.js";
 import { registerWeeklySnapshotTool } from "./tools/weekly-snapshot.js";
 import { registerAnalysisTools } from "./tools/analysis.js";
+import { registerSplitReconciliationTools } from "./tools/split-reconciliation.js";
 
 export async function createStdioServer(
   apiKey: string,
@@ -28,6 +29,7 @@ export async function createStdioServer(
   registerWellnessTools(server, client);
   registerWeeklySnapshotTool(server, client);
   registerAnalysisTools(server, client);
+  registerSplitReconciliationTools(server, client);
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
