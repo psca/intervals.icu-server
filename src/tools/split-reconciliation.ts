@@ -4,6 +4,7 @@ import { IntervalsClient } from "../client.js";
 import { errorResult, textResult } from "./result.js";
 
 type RecordValue = Record<string, unknown>;
+export type CyclingType = "Ride" | "VirtualRide";
 
 const recordSchema = z.record(z.string(), z.unknown());
 const FIVE_MINUTES = 300;
@@ -30,6 +31,7 @@ interface Candidate {
   eligibility_signals: string[];
   supported: boolean;
   warnings: string[];
+  advisories: string[];
 }
 
 function numberField(record: RecordValue, key: string): number {
@@ -39,6 +41,11 @@ function numberField(record: RecordValue, key: string): number {
 
 function stringField(record: RecordValue, key: string): string {
   return typeof record[key] === "string" ? record[key] : "";
+}
+
+export function cyclingType(record: RecordValue): CyclingType | null {
+  const type = stringField(record, "type");
+  return type === "Ride" || type === "VirtualRide" ? type : null;
 }
 
 function localDate(record: RecordValue): string {
@@ -204,11 +211,12 @@ function easyRideEligibility(event: RecordValue, activities: RecordValue[], tota
   eligible: boolean;
   signals: string[];
   warnings: string[];
+  advisories: string[];
 } {
   const warnings: string[] = [];
+  const advisories: string[] = [];
   const signals: string[] = [];
-  if (event.type !== "Ride") warnings.push("Only outdoor Ride workouts are eligible for split reconciliation.");
-  if (event.indoor === true) warnings.push("Indoor rides are not eligible for cafe/endurance split reconciliation.");
+  if (!cyclingType(event)) warnings.push("Only Ride or VirtualRide workouts are eligible for split reconciliation.");
   if (total < 3600) warnings.push("The original planned ride must be at least 60 minutes.");
 
   const workoutDoc = event.workout_doc as RecordValue | undefined;
@@ -235,21 +243,25 @@ function easyRideEligibility(event: RecordValue, activities: RecordValue[], tota
   }
 
   for (const activity of activities) {
+    if (!cyclingType(activity)) {
+      warnings.push(`Activity ${activity.id} is not a Ride or VirtualRide.`);
+      continue;
+    }
     const intensity = normalizedIntensity(activity);
     if (intensity == null) {
-      warnings.push(`Activity ${activity.id} has no intensity value; easy-ride eligibility cannot be confirmed.`);
+      advisories.push(`Activity ${activity.id} has no intensity value.`);
     } else if (intensity > 80) {
-      warnings.push(`Activity ${activity.id} intensity is ${intensity.toFixed(1)}%, above the 80% easy-ride limit.`);
+      advisories.push(`Activity ${activity.id} intensity is ${intensity.toFixed(1)}%, above the 80% easy-ride advisory threshold.`);
     }
   }
-  if (!warnings.some(warning => warning.includes("Activity "))) {
+  if (!advisories.length) {
     signals.push("Every completed activity part is at or below 80% intensity.");
   }
 
   const text = [event.name, ...(Array.isArray(event.tags) ? event.tags : [])].join(" ").toLowerCase();
   const cue = ["easy", "cafe", "endurance", "recovery", "social", "long", "base"].find(word => text.includes(word));
   if (cue) signals.push(`Workout name/tags include the supporting cue “${cue}”.`);
-  return { eligible: warnings.length === 0, signals, warnings };
+  return { eligible: warnings.length === 0, signals, warnings, advisories };
 }
 
 function buildCandidate(event: RecordValue, activities: RecordValue[]): Candidate {
@@ -278,6 +290,7 @@ function buildCandidate(event: RecordValue, activities: RecordValue[]): Candidat
     eligibility_signals: eligibility.signals,
     supported,
     warnings,
+    advisories: eligibility.advisories,
     replacements: activities.map((activity, index) => ({
       activity_id: stringField(activity, "id"),
       name: `${baseName} — ${partSuffix(index, activities.length)}`,
@@ -289,14 +302,15 @@ function buildCandidate(event: RecordValue, activities: RecordValue[]): Candidat
 
 export function findCandidates(events: RecordValue[], activities: RecordValue[], maxGapMinutes: number): Candidate[] {
   const eventsById = new Map(events.map(event => [String(event.id), event]));
-  const byType = new Map<string, RecordValue[]>();
+  const bySport = new Map<string, RecordValue[]>();
   for (const activity of activities) {
     const type = stringField(activity, "type");
     if (!type) continue;
-    byType.set(type, [...(byType.get(type) ?? []), activity]);
+    const sport = cyclingType(activity) ? "Cycling" : type;
+    bySport.set(sport, [...(bySport.get(sport) ?? []), activity]);
   }
   const candidates: Candidate[] = [];
-  for (const sameSport of byType.values()) {
+  for (const sameSport of bySport.values()) {
     sameSport.sort((a, b) => Date.parse(stringField(a, "start_date_local")) - Date.parse(stringField(b, "start_date_local")));
     let cluster: RecordValue[] = [];
     const flush = () => {
@@ -397,7 +411,7 @@ export function registerSplitReconciliationTools(server: McpServer, client: Inte
   server.registerTool(
     "preview_split_workout_reconciliation",
     {
-      description: "Preview eligible easy continuous outdoor rides split across same-day activities. Requires a >=60-minute sequential workout at <=75% FTP and completed parts at <=80% intensity. Read-only; default maximum gap is 90 minutes.",
+      description: "Preview eligible easy continuous Ride or VirtualRide workouts split across same-day cycling activities. Requires a >=60-minute sequential workout at <=75% FTP. Completed intensity above 80% is advisory only. Read-only; default maximum gap is 90 minutes.",
       inputSchema: {
         date: z.string().describe("Athlete-local date YYYY-MM-DD"),
         max_gap_minutes: z.number().int().positive().max(720).optional().default(90),
@@ -431,6 +445,7 @@ export function registerSplitReconciliationTools(server: McpServer, client: Inte
           eligibility_signals: candidate.eligibility_signals,
           supported: candidate.supported,
           warnings: candidate.warnings,
+          advisories: candidate.advisories,
           fingerprint: await fingerprint(candidate),
         })));
         return textResult({ date, max_gap_minutes: resolvedGap, candidates: output, count: output.length });

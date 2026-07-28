@@ -78,19 +78,58 @@ describe("split-workout reconciliation helpers", () => {
     expect(candidate.eligibility_signals).toContain("Workout name/tags include the supporting cue “easy”.");
   });
 
-  it("refuses interval rides and high-intensity completed parts", () => {
+  it("accepts a virtual plan completed as outdoor rides with high-intensity advisories", () => {
+    const virtualEvent = { ...event, type: "VirtualRide", indoor: true };
+    const outdoorActivities = activities.map((activity, index) => ({
+      ...activity,
+      type: "Ride",
+      icu_intensity: index === 0 ? 80.1 : 80.6,
+    }));
+
+    const candidate = findCandidates([virtualEvent], outdoorActivities, 90)[0];
+
+    expect(candidate.supported).toBe(true);
+    expect(candidate.classification).toBe("EASY_CONTINUOUS_RIDE");
+    expect(candidate.warnings).toEqual([]);
+    expect(candidate.advisories).toEqual([
+      "Activity i164875648 intensity is 80.1%, above the 80% easy-ride advisory threshold.",
+      "Activity i164885877 intensity is 80.6%, above the 80% easy-ride advisory threshold.",
+    ]);
+  });
+
+  it("keeps missing completed intensity advisory-only", () => {
+    const withoutIntensity = activities.map(activity => ({ ...activity, icu_intensity: undefined }));
+    const candidate = findCandidates([event], withoutIntensity, 90)[0];
+
+    expect(candidate.supported).toBe(true);
+    expect(candidate.warnings).toEqual([]);
+    expect(candidate.advisories).toEqual([
+      "Activity i164875648 has no intensity value.",
+      "Activity i164885877 has no intensity value.",
+    ]);
+  });
+
+  it("still refuses hard planned targets", () => {
     const hardEvent = {
       ...event,
       name: "Sprint workout",
       workout_doc: { duration: 7200, steps: [{ duration: 7200, power: { value: 120, units: "%ftp" } }] },
       description: "Main Set\n- 120m 120%",
     };
-    const hardActivities = activities.map((activity, index) => ({ ...activity, icu_intensity: index ? 85 : 72 }));
-    const candidate = findCandidates([hardEvent], hardActivities, 90)[0];
+    const candidate = findCandidates([hardEvent], activities, 90)[0];
     expect(candidate.supported).toBe(false);
     expect(candidate.classification).toBeNull();
     expect(candidate.warnings.join(" ")).toMatch(/75% FTP/);
-    expect(candidate.warnings.join(" ")).toMatch(/80% easy-ride limit/);
+  });
+
+  it("still refuses non-cycling activity clusters", () => {
+    const runEvent = { ...event, type: "Run" };
+    const runActivities = activities.map(activity => ({ ...activity, type: "Run" }));
+    const candidate = findCandidates([runEvent], runActivities, 90)[0];
+
+    expect(candidate.supported).toBe(false);
+    expect(candidate.classification).toBeNull();
+    expect(candidate.warnings.join(" ")).toMatch(/Ride or VirtualRide/);
   });
 
   it("preserves total duration when allocating three unequal activities", () => {

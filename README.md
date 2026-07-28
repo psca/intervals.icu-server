@@ -103,7 +103,7 @@ Use that page to update your intervals.icu athlete ID or API key, or to disconne
 | `get_events` | Planned workouts/events by date range |
 | `get_event_by_id` | Single event details |
 | `add_or_update_event` | Create or modify planned workouts |
-| `preview_split_workout_reconciliation` | Read-only preview of eligible easy continuous outdoor rides split across same-day activities |
+| `preview_split_workout_reconciliation` | Read-only preview of eligible easy continuous `Ride` or `VirtualRide` workouts split across same-day cycling activities; completed intensity above 80% is advisory |
 | `reconcile_split_workout` | Confirmed, fingerprint-protected event split, activity pairing, and activity rename workflow |
 | `delete_event` | Delete a single event |
 | `delete_events_by_date_range` | Delete all events in a date range |
