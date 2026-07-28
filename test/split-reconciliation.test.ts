@@ -20,6 +20,73 @@ async function callTool(server: any, toolName: string, args: Record<string, unkn
   return server._registeredTools[toolName].handler(args, {});
 }
 
+function installMutableApi(
+  initialEvent: Record<string, unknown>,
+  initialActivities: Array<Record<string, unknown>>,
+) {
+  const activityState = new Map(
+    initialActivities.map(activity => [String(activity.id), { ...activity }]),
+  );
+  let eventState = { ...initialEvent };
+  const createdEvents: Array<Record<string, unknown>> = [];
+  let writeCount = 0;
+
+  vi.stubGlobal("fetch", vi.fn().mockImplementation((urlString: string, init?: RequestInit) => {
+    const url = new URL(urlString);
+    const method = init?.method ?? "GET";
+    const body = init?.body
+      ? JSON.parse(String(init.body)) as Record<string, unknown>
+      : {};
+    if (method !== "GET") writeCount++;
+
+    let response: unknown;
+    if (method === "GET" && url.pathname.endsWith("/activities")) {
+      response = [...activityState.values()].map(item => ({ ...item }));
+    } else if (method === "GET" && url.pathname.endsWith("/events")) {
+      response = [{ ...eventState }, ...createdEvents];
+    } else if (method === "GET" && url.pathname.includes("/events/")) {
+      const id = url.pathname.split("/").pop();
+      response = id === String(initialEvent.id)
+        ? eventState
+        : createdEvents.find(item => String(item.id) === id);
+    } else if (method === "GET" && url.pathname.startsWith("/api/v1/activity/")) {
+      response = activityState.get(url.pathname.split("/").pop() ?? "");
+    } else if (method === "PUT" && url.pathname.startsWith("/api/v1/activity/")) {
+      const id = String(body.id);
+      const updated = { ...(activityState.get(id) ?? {}), ...body };
+      activityState.set(id, updated);
+      response = updated;
+    } else if (method === "PUT" && url.pathname.endsWith(`/events/${initialEvent.id}`)) {
+      eventState = { ...eventState, ...body };
+      response = eventState;
+    } else if (method === "POST" && url.pathname.endsWith("/events")) {
+      response = { id: 222, ...body };
+      createdEvents.push(response as Record<string, unknown>);
+    } else {
+      throw new Error(`Unexpected request: ${method} ${url.pathname}`);
+    }
+    return Promise.resolve({
+      ok: true,
+      json: () => Promise.resolve(response),
+      text: () => Promise.resolve(""),
+    });
+  }));
+
+  return {
+    activityState,
+    createdEvents,
+    get eventState() {
+      return eventState;
+    },
+    setEventState(value: Record<string, unknown>) {
+      eventState = value;
+    },
+    get writeCount() {
+      return writeCount;
+    },
+  };
+}
+
 const event = {
   id: 121750183,
   name: "Base Transition — Easy Outdoor Endurance 120 min",
@@ -183,38 +250,13 @@ describe("split-workout reconciliation tools", () => {
   });
 
   it("applies a current preview with explicit pairings and matching activity names", async () => {
-    const activityState = new Map(activities.map(activity => [activity.id, { ...activity }]));
-    let eventState = { ...event };
-    const createdEvents: Record<string, unknown>[] = [];
-
-    vi.stubGlobal("fetch", vi.fn().mockImplementation((urlString: string, init?: RequestInit) => {
-      const url = new URL(urlString);
-      const method = init?.method ?? "GET";
-      const body = init?.body ? JSON.parse(String(init.body)) : null;
-      let response: unknown;
-      if (method === "GET" && url.pathname.endsWith("/activities")) {
-        response = [...activityState.values()].map(item => ({ ...item }));
-      } else if (method === "GET" && url.pathname.endsWith("/events")) {
-        response = [{ ...eventState }, ...createdEvents];
-      } else if (method === "GET" && url.pathname.includes("/events/")) {
-        const id = url.pathname.split("/").pop();
-        response = id === String(event.id) ? eventState : createdEvents.find(item => String(item.id) === id);
-      }
-      else if (method === "GET" && url.pathname.startsWith("/api/v1/activity/")) {
-        response = activityState.get(url.pathname.split("/").pop() ?? "");
-      } else if (method === "PUT" && url.pathname.startsWith("/api/v1/activity/")) {
-        const updated = { ...activityState.get(body.id), ...body };
-        activityState.set(body.id, updated);
-        response = updated;
-      } else if (method === "PUT" && url.pathname.endsWith(`/events/${event.id}`)) {
-        eventState = { ...eventState, ...body };
-        response = eventState;
-      } else if (method === "POST" && url.pathname.endsWith("/events")) {
-        response = { id: 222, ...body };
-        createdEvents.push(response as Record<string, unknown>);
-      } else throw new Error(`Unexpected request: ${method} ${url.pathname}`);
-      return Promise.resolve({ ok: true, json: () => Promise.resolve(response), text: () => Promise.resolve("") });
+    const virtualEvent = { ...event, type: "VirtualRide", indoor: true };
+    const outdoorActivities = activities.map((activity, index) => ({
+      ...activity,
+      type: "Ride",
+      icu_intensity: index === 0 ? 80.1 : 80.6,
     }));
+    const api = installMutableApi(virtualEvent, outdoorActivities);
 
     const server = await createStdioServer("test-key", "i388529");
     const preview = await callTool(server, "preview_split_workout_reconciliation", { date: "2026-07-12" });
@@ -223,17 +265,43 @@ describe("split-workout reconciliation tools", () => {
     const result = await callTool(server, "reconcile_split_workout", {
       date: "2026-07-12",
       event_id: String(event.id),
-      activity_ids: activities.map(activity => activity.id),
+      activity_ids: outdoorActivities.map(activity => activity.id),
       fingerprint: candidate.fingerprint,
       confirm: true,
     });
 
     expect(result.structuredContent.applied).toBe(true);
     expect(result.structuredContent.event_ids).toEqual([String(event.id), "222"]);
-    expect(activityState.get("i164875648")?.paired_event_id).toBe(event.id);
-    expect(activityState.get("i164885877")?.paired_event_id).toBe(222);
-    expect(activityState.get("i164875648")?.name).toMatch(/Outbound$/);
-    expect(activityState.get("i164885877")?.name).toMatch(/Inbound$/);
+    expect(api.eventState).toMatchObject({ type: "Ride", indoor: false });
+    expect(api.createdEvents[0]).toMatchObject({ type: "Ride", indoor: false });
+    expect(api.activityState.get("i164875648")?.paired_event_id).toBe(event.id);
+    expect(api.activityState.get("i164885877")?.paired_event_id).toBe(222);
+    expect(api.activityState.get("i164875648")?.name).toMatch(/Outbound$/);
+    expect(api.activityState.get("i164885877")?.name).toMatch(/Inbound$/);
+  });
+
+  it("rejects a preview when cycling metadata changes before apply", async () => {
+    const virtualEvent = { ...event, type: "VirtualRide", indoor: true };
+    const api = installMutableApi(virtualEvent, activities);
+    const server = await createStdioServer("test-key", "i388529");
+    const preview = await callTool(server, "preview_split_workout_reconciliation", {
+      date: "2026-07-12",
+    });
+    const candidate = preview.structuredContent.candidates[0];
+    api.setEventState({ ...api.eventState, indoor: false });
+
+    const writesBeforeApply = api.writeCount;
+    const result = await callTool(server, "reconcile_split_workout", {
+      date: "2026-07-12",
+      event_id: String(event.id),
+      activity_ids: activities.map(activity => activity.id),
+      fingerprint: candidate.fingerprint,
+      confirm: true,
+    });
+
+    expect(result.structuredContent.applied).toBe(false);
+    expect(result.structuredContent.error).toMatch(/changed after preview/);
+    expect(api.writeCount).toBe(writesBeforeApply);
   });
 
   it("rejects a stale fingerprint before making any writes", async () => {

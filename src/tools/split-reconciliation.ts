@@ -21,6 +21,8 @@ interface Replacement {
   name: string;
   moving_time: number;
   description: string;
+  type: CyclingType;
+  indoor: boolean;
 }
 
 interface Candidate {
@@ -296,6 +298,8 @@ function buildCandidate(event: RecordValue, activities: RecordValue[]): Candidat
       name: `${baseName} — ${partSuffix(index, activities.length)}`,
       moving_time: allocations[index] ?? 0,
       description: descriptions[index] ?? "",
+      type: cyclingType(activity) ?? "Ride",
+      indoor: typeof activity.indoor === "boolean" ? activity.indoor : cyclingType(activity) === "VirtualRide",
     })),
   };
 }
@@ -344,6 +348,7 @@ function fingerprintPayload(candidate: Candidate): RecordValue {
       id: candidate.event.id,
       name: candidate.event.name,
       type: candidate.event.type,
+      indoor: candidate.event.indoor ?? null,
       start_date_local: candidate.event.start_date_local,
       moving_time: plannedDuration(candidate.event),
       description: candidate.event.description,
@@ -351,6 +356,8 @@ function fingerprintPayload(candidate: Candidate): RecordValue {
     },
     activities: candidate.activities.map(activity => ({
       id: activity.id,
+      type: activity.type,
+      indoor: activity.indoor ?? null,
       start_date_local: activity.start_date_local,
       moving_time: activity.moving_time,
       elapsed_time: activity.elapsed_time,
@@ -362,6 +369,7 @@ function fingerprintPayload(candidate: Candidate): RecordValue {
     replacements: candidate.replacements,
     classification: candidate.classification,
     eligibility_signals: candidate.eligibility_signals,
+    advisories: candidate.advisories,
   };
 }
 
@@ -381,7 +389,7 @@ async function loadCandidates(client: IntervalsClient, date: string, maxGapMinut
 
 function eventWritePayload(event: RecordValue, replacement: Replacement): RecordValue {
   const fields = [
-    "category", "type", "target", "targets", "indoor", "tags", "sub_type", "color",
+    "category", "target", "targets", "tags", "sub_type", "color",
     "carbs_per_hour", "hide_from_athlete", "athlete_cannot_edit", "structure_read_only",
     "not_on_fitness_chart", "show_as_note", "show_on_ctl_line", "for_week",
     "training_availability", "max_training_time", "can_train_sports", "external_id", "calendar_id",
@@ -389,7 +397,8 @@ function eventWritePayload(event: RecordValue, replacement: Replacement): Record
   const payload: RecordValue = {
     start_date_local: event.start_date_local,
     category: event.category ?? "WORKOUT",
-    type: event.type,
+    type: replacement.type,
+    indoor: replacement.indoor,
     name: replacement.name,
     moving_time: replacement.moving_time,
     description: replacement.description,
@@ -404,6 +413,8 @@ function originalEventWritePayload(event: RecordValue): RecordValue {
     name: stringField(event, "name"),
     moving_time: plannedDuration(event),
     description: stringField(event, "description"),
+    type: cyclingType(event) ?? "Ride",
+    indoor: event.indoor === true,
   });
 }
 
@@ -534,7 +545,9 @@ export function registerSplitReconciliationTools(server: McpServer, client: Inte
           const verifiedEvent = await client.get<RecordValue>(`/athlete/${client.athleteId}/events/${eventIds[index]}`);
           if (verifiedEvent.name !== candidate.replacements[index].name
             || numberField(verifiedEvent, "moving_time") !== candidate.replacements[index].moving_time
-            || verifiedEvent.description !== candidate.replacements[index].description) {
+            || verifiedEvent.description !== candidate.replacements[index].description
+            || stringField(verifiedEvent, "type") !== candidate.replacements[index].type
+            || Boolean(verifiedEvent.indoor) !== candidate.replacements[index].indoor) {
             throw new Error(`Final verification failed for event ${eventIds[index]}.`);
           }
         }
