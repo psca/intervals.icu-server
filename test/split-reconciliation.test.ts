@@ -24,6 +24,7 @@ interface MutableApiOptions {
   failPairingActivityId?: string;
   ignoreRollbackEventRestore?: boolean;
   ambiguousCreateFailure?: boolean;
+  missingCreateIdResponse?: boolean;
 }
 
 function installMutableApi(
@@ -92,8 +93,9 @@ function installMutableApi(
         response = eventState;
       }
     } else if (method === "POST" && url.pathname.endsWith("/events")) {
-      response = { id: 222 + createdEvents.length, ...body };
-      createdEvents.push(response as Record<string, unknown>);
+      const created = { id: 222 + createdEvents.length, ...body };
+      createdEvents.push(created);
+      response = options.missingCreateIdResponse ? { ...body } : created;
       if (options.ambiguousCreateFailure) return Promise.reject(new Error("Injected ambiguous create failure"));
     } else if (method === "DELETE" && url.pathname.includes("/events/")) {
       rollbackStarted = true;
@@ -397,6 +399,30 @@ describe("split-workout reconciliation tools", () => {
   it("marks rollback incomplete when event creation outcome is ambiguous", async () => {
     const api = installMutableApi(event, activities, {
       ambiguousCreateFailure: true,
+    });
+    const server = await createStdioServer("test-key", "i388529");
+    const preview = await callTool(server, "preview_split_workout_reconciliation", {
+      date: "2026-07-12",
+    });
+    const candidate = preview.structuredContent.candidates[0];
+
+    const result = await callTool(server, "reconcile_split_workout", {
+      date: "2026-07-12",
+      event_id: String(event.id),
+      activity_ids: activities.map(activity => activity.id),
+      fingerprint: candidate.fingerprint,
+      confirm: true,
+    });
+
+    expect(result.structuredContent.applied).toBe(false);
+    expect(result.structuredContent.rollback_attempted).toBe(true);
+    expect(result.structuredContent.rollback_complete).toBe(false);
+    expect(api.createdEvents).toHaveLength(1);
+  });
+
+  it("marks rollback incomplete when a successful event create omits its id", async () => {
+    const api = installMutableApi(event, activities, {
+      missingCreateIdResponse: true,
     });
     const server = await createStdioServer("test-key", "i388529");
     const preview = await callTool(server, "preview_split_workout_reconciliation", {

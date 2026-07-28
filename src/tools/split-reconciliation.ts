@@ -595,7 +595,15 @@ export function registerSplitReconciliationTools(server: McpServer, client: Inte
               eventWritePayload(originalEvent, detailedCandidate.replacements[index]),
             );
             eventCreationInFlight = false;
-            const createdId = String(created.id);
+            const createdId = typeof created.id === "number" || typeof created.id === "string"
+              ? String(created.id).trim()
+              : "";
+            if (!/^\d+$/.test(createdId)
+              || createdId === event_id
+              || createdEventIds.includes(createdId)) {
+              ambiguousEventCreation = true;
+              throw new Error("Event creation returned no usable event ID; rollback is incomplete.");
+            }
             createdEventIds.push(createdId);
             eventIds.push(createdId);
           } catch (error) {
