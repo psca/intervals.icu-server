@@ -20,9 +20,16 @@ async function callTool(server: any, toolName: string, args: Record<string, unkn
   return server._registeredTools[toolName].handler(args, {});
 }
 
+interface MutableApiOptions {
+  failPairingActivityId?: string;
+  ignoreRollbackEventRestore?: boolean;
+  ambiguousCreateFailure?: boolean;
+}
+
 function installMutableApi(
   initialEvent: Record<string, unknown>,
   initialActivities: Array<Record<string, unknown>>,
+  options: MutableApiOptions = {},
 ) {
   const eventListState = { ...initialEvent };
   const activityListState = initialActivities.map(activity => ({ ...activity }));
@@ -32,6 +39,9 @@ function installMutableApi(
   let eventState = { ...initialEvent };
   const createdEvents: Array<Record<string, unknown>> = [];
   let writeCount = 0;
+  let eventPutCount = 0;
+  let rollbackStarted = false;
+  let rollbackVerificationReadCount = 0;
 
   vi.stubGlobal("fetch", vi.fn().mockImplementation((urlString: string, init?: RequestInit) => {
     const url = new URL(urlString);
@@ -48,22 +58,48 @@ function installMutableApi(
       response = [{ ...eventListState }, ...createdEvents];
     } else if (method === "GET" && url.pathname.includes("/events/")) {
       const id = url.pathname.split("/").pop();
-      response = id === String(initialEvent.id)
+      if (rollbackStarted && id === String(initialEvent.id)) rollbackVerificationReadCount++;
+      const eventResponse = id === String(initialEvent.id)
         ? eventState
         : createdEvents.find(item => String(item.id) === id);
+      if (!eventResponse) {
+        return Promise.resolve({
+          ok: false,
+          status: 404,
+          json: () => Promise.resolve({}),
+          text: () => Promise.resolve("Not found"),
+        });
+      }
+      response = eventResponse;
     } else if (method === "GET" && url.pathname.startsWith("/api/v1/activity/")) {
+      if (rollbackStarted && activityState.has(url.pathname.split("/").pop() ?? "")) rollbackVerificationReadCount++;
       response = activityState.get(url.pathname.split("/").pop() ?? "");
     } else if (method === "PUT" && url.pathname.startsWith("/api/v1/activity/")) {
       const id = String(body.id);
+      if (options.failPairingActivityId === id && body.paired_event_id != null) {
+        return Promise.reject(new Error("Injected pairing failure"));
+      }
       const updated = { ...(activityState.get(id) ?? {}), ...body };
       activityState.set(id, updated);
       response = updated;
     } else if (method === "PUT" && url.pathname.endsWith(`/events/${initialEvent.id}`)) {
-      eventState = { ...eventState, ...body };
-      response = eventState;
+      eventPutCount++;
+      if (eventPutCount > 1) rollbackStarted = true;
+      if (options.ignoreRollbackEventRestore && eventPutCount > 1) {
+        response = eventState;
+      } else {
+        eventState = { ...eventState, ...body };
+        response = eventState;
+      }
     } else if (method === "POST" && url.pathname.endsWith("/events")) {
-      response = { id: 222, ...body };
+      response = { id: 222 + createdEvents.length, ...body };
       createdEvents.push(response as Record<string, unknown>);
+      if (options.ambiguousCreateFailure) return Promise.reject(new Error("Injected ambiguous create failure"));
+    } else if (method === "DELETE" && url.pathname.includes("/events/")) {
+      rollbackStarted = true;
+      const id = url.pathname.split("/").pop();
+      const index = createdEvents.findIndex(item => String(item.id) === id);
+      if (index >= 0) createdEvents.splice(index, 1);
     } else {
       throw new Error(`Unexpected request: ${method} ${url.pathname}`);
     }
@@ -88,6 +124,9 @@ function installMutableApi(
     },
     get writeCount() {
       return writeCount;
+    },
+    get rollbackVerificationReadCount() {
+      return rollbackVerificationReadCount;
     },
   };
 }
@@ -288,6 +327,95 @@ describe("split-workout reconciliation tools", () => {
     expect(api.activityState.get("i164885877")?.paired_event_id).toBe(222);
     expect(api.activityState.get("i164875648")?.name).toMatch(/Outbound$/);
     expect(api.activityState.get("i164885877")?.name).toMatch(/Inbound$/);
+  });
+
+  it("verifies restored event and activity state after a partial apply failure", async () => {
+    const virtualEvent = { ...event, type: "VirtualRide", indoor: true };
+    const api = installMutableApi(virtualEvent, activities, {
+      failPairingActivityId: "i164885877",
+    });
+    const server = await createStdioServer("test-key", "i388529");
+    const preview = await callTool(server, "preview_split_workout_reconciliation", {
+      date: "2026-07-12",
+    });
+    const candidate = preview.structuredContent.candidates[0];
+
+    const result = await callTool(server, "reconcile_split_workout", {
+      date: "2026-07-12",
+      event_id: String(event.id),
+      activity_ids: activities.map(activity => activity.id),
+      fingerprint: candidate.fingerprint,
+      confirm: true,
+    });
+
+    expect(result.structuredContent.applied).toBe(false);
+    expect(result.structuredContent.rollback_attempted).toBe(true);
+    expect(result.structuredContent.rollback_complete).toBe(true);
+    expect(api.createdEvents).toEqual([]);
+    expect(api.rollbackVerificationReadCount).toBe(3);
+    expect(api.eventState).toMatchObject({
+      name: virtualEvent.name,
+      type: "VirtualRide",
+      indoor: true,
+      moving_time: 7200,
+      description: virtualEvent.description,
+    });
+    expect(api.activityState.get("i164875648")).toMatchObject({
+      paired_event_id: event.id,
+      name: event.name,
+    });
+    expect(api.activityState.get("i164885877")).toMatchObject({
+      paired_event_id: null,
+      name: "Singapore Road Cycling",
+    });
+  });
+
+  it("marks rollback incomplete when restored state does not match", async () => {
+    const api = installMutableApi(event, activities, {
+      failPairingActivityId: "i164885877",
+      ignoreRollbackEventRestore: true,
+    });
+    const server = await createStdioServer("test-key", "i388529");
+    const preview = await callTool(server, "preview_split_workout_reconciliation", {
+      date: "2026-07-12",
+    });
+    const candidate = preview.structuredContent.candidates[0];
+
+    const result = await callTool(server, "reconcile_split_workout", {
+      date: "2026-07-12",
+      event_id: String(event.id),
+      activity_ids: activities.map(activity => activity.id),
+      fingerprint: candidate.fingerprint,
+      confirm: true,
+    });
+
+    expect(result.structuredContent.applied).toBe(false);
+    expect(result.structuredContent.rollback_attempted).toBe(true);
+    expect(result.structuredContent.rollback_complete).toBe(false);
+  });
+
+  it("marks rollback incomplete when event creation outcome is ambiguous", async () => {
+    const api = installMutableApi(event, activities, {
+      ambiguousCreateFailure: true,
+    });
+    const server = await createStdioServer("test-key", "i388529");
+    const preview = await callTool(server, "preview_split_workout_reconciliation", {
+      date: "2026-07-12",
+    });
+    const candidate = preview.structuredContent.candidates[0];
+
+    const result = await callTool(server, "reconcile_split_workout", {
+      date: "2026-07-12",
+      event_id: String(event.id),
+      activity_ids: activities.map(activity => activity.id),
+      fingerprint: candidate.fingerprint,
+      confirm: true,
+    });
+
+    expect(result.structuredContent.applied).toBe(false);
+    expect(result.structuredContent.rollback_attempted).toBe(true);
+    expect(result.structuredContent.rollback_complete).toBe(false);
+    expect(api.createdEvents).toHaveLength(1);
   });
 
   it("rejects a preview when cycling metadata changes before apply", async () => {

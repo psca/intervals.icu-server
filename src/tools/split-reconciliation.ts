@@ -423,6 +423,59 @@ function originalEventWritePayload(event: RecordValue): RecordValue {
   });
 }
 
+function eventMatchesReplacement(event: RecordValue, replacement: Replacement): boolean {
+  return event.name === replacement.name
+    && numberField(event, "moving_time") === replacement.moving_time
+    && event.description === replacement.description
+    && stringField(event, "type") === replacement.type
+    && normalizedIndoor(event) === replacement.indoor;
+}
+
+function activityMatchesSnapshot(activity: RecordValue, snapshot: RecordValue): boolean {
+  return String(activity.paired_event_id ?? "") === String(snapshot.paired_event_id ?? "")
+    && activity.name === snapshot.name;
+}
+
+async function createdEventIsAbsent(client: IntervalsClient, eventId: string): Promise<boolean> {
+  try {
+    await client.get<RecordValue>(`/athlete/${client.athleteId}/events/${eventId}`);
+    return false;
+  } catch (error) {
+    return error instanceof Error && error.message.startsWith("404:");
+  }
+}
+
+async function verifyRollback(
+  client: IntervalsClient,
+  eventId: string,
+  originalEvent: RecordValue,
+  originalActivities: RecordValue[],
+  createdEventIds: string[],
+): Promise<boolean> {
+  for (const createdId of createdEventIds) {
+    if (!await createdEventIsAbsent(client, createdId)) return false;
+  }
+
+  const restoredEvent = await client.get<RecordValue>(
+    `/athlete/${client.athleteId}/events/${eventId}`,
+  );
+  const originalReplacement: Replacement = {
+    activity_id: "",
+    name: stringField(originalEvent, "name"),
+    moving_time: plannedDuration(originalEvent),
+    description: stringField(originalEvent, "description"),
+    type: cyclingType(originalEvent) ?? "Ride",
+    indoor: normalizedIndoor(originalEvent),
+  };
+  if (!eventMatchesReplacement(restoredEvent, originalReplacement)) return false;
+
+  for (const snapshot of originalActivities) {
+    const restored = await client.get<RecordValue>(`/activity/${snapshot.id}`);
+    if (!activityMatchesSnapshot(restored, snapshot)) return false;
+  }
+  return true;
+}
+
 export function registerSplitReconciliationTools(server: McpServer, client: IntervalsClient): void {
   server.registerTool(
     "preview_split_workout_reconciliation",
@@ -497,6 +550,8 @@ export function registerSplitReconciliationTools(server: McpServer, client: Inte
       let originalEvent: RecordValue | null = null;
       let originalActivities: RecordValue[] = [];
       const createdEventIds: string[] = [];
+      let eventCreationInFlight = false;
+      let ambiguousEventCreation = false;
       try {
         const candidates = await loadCandidates(client, date, max_gap_minutes ?? 90);
         const previewCandidate = candidates.find(item => String(item.event.id) === event_id
@@ -533,13 +588,21 @@ export function registerSplitReconciliationTools(server: McpServer, client: Inte
         );
         const eventIds = [String(firstEvent.id ?? event_id)];
         for (let index = 1; index < detailedCandidate.replacements.length; index++) {
-          const created = await client.post<RecordValue>(
-            `/athlete/${client.athleteId}/events`,
-            eventWritePayload(originalEvent, detailedCandidate.replacements[index]),
-          );
-          const createdId = String(created.id);
-          createdEventIds.push(createdId);
-          eventIds.push(createdId);
+          eventCreationInFlight = true;
+          try {
+            const created = await client.post<RecordValue>(
+              `/athlete/${client.athleteId}/events`,
+              eventWritePayload(originalEvent, detailedCandidate.replacements[index]),
+            );
+            eventCreationInFlight = false;
+            const createdId = String(created.id);
+            createdEventIds.push(createdId);
+            eventIds.push(createdId);
+          } catch (error) {
+            if (eventCreationInFlight) ambiguousEventCreation = true;
+            eventCreationInFlight = false;
+            throw error;
+          }
         }
 
         const pairings: RecordValue[] = [];
@@ -563,11 +626,7 @@ export function registerSplitReconciliationTools(server: McpServer, client: Inte
             throw new Error(`Final verification failed for activity ${activity_ids[index]}.`);
           }
           const verifiedEvent = await client.get<RecordValue>(`/athlete/${client.athleteId}/events/${eventIds[index]}`);
-          if (verifiedEvent.name !== detailedCandidate.replacements[index].name
-            || numberField(verifiedEvent, "moving_time") !== detailedCandidate.replacements[index].moving_time
-            || verifiedEvent.description !== detailedCandidate.replacements[index].description
-            || stringField(verifiedEvent, "type") !== detailedCandidate.replacements[index].type
-            || normalizedIndoor(verifiedEvent) !== detailedCandidate.replacements[index].indoor) {
+          if (!eventMatchesReplacement(verifiedEvent, detailedCandidate.replacements[index])) {
             throw new Error(`Final verification failed for event ${eventIds[index]}.`);
           }
         }
@@ -586,7 +645,7 @@ export function registerSplitReconciliationTools(server: McpServer, client: Inte
         if (!originalEvent || !originalActivities.length) {
           return textResult({ applied: false, original_event_id: event_id, event_ids: [], pairings: [], rollback_attempted: false, rollback_complete: null, error: message });
         }
-        let rollbackComplete = true;
+        let rollbackComplete = !ambiguousEventCreation;
         for (const createdId of createdEventIds) {
           try { await client.delete(`/athlete/${client.athleteId}/events/${createdId}`); } catch { rollbackComplete = false; }
         }
@@ -601,6 +660,17 @@ export function registerSplitReconciliationTools(server: McpServer, client: Inte
               name: activity.name,
             });
           } catch { rollbackComplete = false; }
+        }
+        try {
+          rollbackComplete = await verifyRollback(
+            client,
+            event_id,
+            originalEvent,
+            originalActivities,
+            createdEventIds,
+          ) && rollbackComplete;
+        } catch {
+          rollbackComplete = false;
         }
         return textResult({ applied: false, original_event_id: event_id, event_ids: [], pairings: [], rollback_attempted: true, rollback_complete: rollbackComplete, error: message });
       }
