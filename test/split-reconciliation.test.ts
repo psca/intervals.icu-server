@@ -24,6 +24,8 @@ function installMutableApi(
   initialEvent: Record<string, unknown>,
   initialActivities: Array<Record<string, unknown>>,
 ) {
+  const eventListState = { ...initialEvent };
+  const activityListState = initialActivities.map(activity => ({ ...activity }));
   const activityState = new Map(
     initialActivities.map(activity => [String(activity.id), { ...activity }]),
   );
@@ -41,9 +43,9 @@ function installMutableApi(
 
     let response: unknown;
     if (method === "GET" && url.pathname.endsWith("/activities")) {
-      response = [...activityState.values()].map(item => ({ ...item }));
+      response = activityListState.map(item => ({ ...item }));
     } else if (method === "GET" && url.pathname.endsWith("/events")) {
-      response = [{ ...eventState }, ...createdEvents];
+      response = [{ ...eventListState }, ...createdEvents];
     } else if (method === "GET" && url.pathname.includes("/events/")) {
       const id = url.pathname.split("/").pop();
       response = id === String(initialEvent.id)
@@ -80,6 +82,9 @@ function installMutableApi(
     },
     setEventState(value: Record<string, unknown>) {
       eventState = value;
+    },
+    setActivityState(id: string, value: Record<string, unknown>) {
+      activityState.set(id, value);
     },
     get writeCount() {
       return writeCount;
@@ -251,21 +256,26 @@ describe("split-workout reconciliation tools", () => {
 
   it("applies a current preview with explicit pairings and matching activity names", async () => {
     const virtualEvent = { ...event, type: "VirtualRide", indoor: true };
-    const outdoorActivities = activities.map((activity, index) => ({
+    const mixedActivities = activities.map((activity, index) => ({
       ...activity,
-      type: "Ride",
+      type: index === 0 ? "Ride" : "VirtualRide",
+      indoor: index === 0 ? false : true,
       icu_intensity: index === 0 ? 80.1 : 80.6,
     }));
-    const api = installMutableApi(virtualEvent, outdoorActivities);
+    const api = installMutableApi(virtualEvent, mixedActivities);
 
     const server = await createStdioServer("test-key", "i388529");
     const preview = await callTool(server, "preview_split_workout_reconciliation", { date: "2026-07-12" });
     expect(preview.structuredContent.count).toBe(1);
     const candidate = preview.structuredContent.candidates[0];
+    expect(candidate.replacements).toMatchObject([
+      { type: "Ride", indoor: false },
+      { type: "VirtualRide", indoor: true },
+    ]);
     const result = await callTool(server, "reconcile_split_workout", {
       date: "2026-07-12",
       event_id: String(event.id),
-      activity_ids: outdoorActivities.map(activity => activity.id),
+      activity_ids: mixedActivities.map(activity => activity.id),
       fingerprint: candidate.fingerprint,
       confirm: true,
     });
@@ -273,7 +283,7 @@ describe("split-workout reconciliation tools", () => {
     expect(result.structuredContent.applied).toBe(true);
     expect(result.structuredContent.event_ids).toEqual([String(event.id), "222"]);
     expect(api.eventState).toMatchObject({ type: "Ride", indoor: false });
-    expect(api.createdEvents[0]).toMatchObject({ type: "Ride", indoor: false });
+    expect(api.createdEvents[0]).toMatchObject({ type: "VirtualRide", indoor: true });
     expect(api.activityState.get("i164875648")?.paired_event_id).toBe(event.id);
     expect(api.activityState.get("i164885877")?.paired_event_id).toBe(222);
     expect(api.activityState.get("i164875648")?.name).toMatch(/Outbound$/);
@@ -302,6 +312,33 @@ describe("split-workout reconciliation tools", () => {
     expect(result.structuredContent.applied).toBe(false);
     expect(result.structuredContent.error).toMatch(/changed after preview/);
     expect(api.writeCount).toBe(writesBeforeApply);
+  });
+
+  it("rejects changed activity details before making any writes", async () => {
+    const api = installMutableApi(event, activities);
+    const server = await createStdioServer("test-key", "i388529");
+    const preview = await callTool(server, "preview_split_workout_reconciliation", {
+      date: "2026-07-12",
+    });
+    const candidate = preview.structuredContent.candidates[0];
+    api.setActivityState("i164885877", {
+      ...api.activityState.get("i164885877"),
+      type: "VirtualRide",
+      indoor: true,
+      name: "Changed after preview",
+    });
+
+    const result = await callTool(server, "reconcile_split_workout", {
+      date: "2026-07-12",
+      event_id: String(event.id),
+      activity_ids: activities.map(activity => activity.id),
+      fingerprint: candidate.fingerprint,
+      confirm: true,
+    });
+
+    expect(result.structuredContent.applied).toBe(false);
+    expect(result.structuredContent.error).toMatch(/changed after preview/);
+    expect(api.writeCount).toBe(0);
   });
 
   it("rejects a stale fingerprint before making any writes", async () => {

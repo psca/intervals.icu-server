@@ -50,6 +50,11 @@ export function cyclingType(record: RecordValue): CyclingType | null {
   return type === "Ride" || type === "VirtualRide" ? type : null;
 }
 
+function normalizedIndoor(record: RecordValue): boolean {
+  if (typeof record.indoor === "boolean") return record.indoor;
+  return cyclingType(record) === "VirtualRide";
+}
+
 function localDate(record: RecordValue): string {
   return stringField(record, "start_date_local").slice(0, 10);
 }
@@ -299,7 +304,7 @@ function buildCandidate(event: RecordValue, activities: RecordValue[]): Candidat
       moving_time: allocations[index] ?? 0,
       description: descriptions[index] ?? "",
       type: cyclingType(activity) ?? "Ride",
-      indoor: typeof activity.indoor === "boolean" ? activity.indoor : cyclingType(activity) === "VirtualRide",
+      indoor: normalizedIndoor(activity),
     })),
   };
 }
@@ -348,7 +353,7 @@ function fingerprintPayload(candidate: Candidate): RecordValue {
       id: candidate.event.id,
       name: candidate.event.name,
       type: candidate.event.type,
-      indoor: candidate.event.indoor ?? null,
+      indoor: normalizedIndoor(candidate.event),
       start_date_local: candidate.event.start_date_local,
       moving_time: plannedDuration(candidate.event),
       description: candidate.event.description,
@@ -357,7 +362,7 @@ function fingerprintPayload(candidate: Candidate): RecordValue {
     activities: candidate.activities.map(activity => ({
       id: activity.id,
       type: activity.type,
-      indoor: activity.indoor ?? null,
+      indoor: normalizedIndoor(activity),
       start_date_local: activity.start_date_local,
       moving_time: activity.moving_time,
       elapsed_time: activity.elapsed_time,
@@ -414,7 +419,7 @@ function originalEventWritePayload(event: RecordValue): RecordValue {
     moving_time: plannedDuration(event),
     description: stringField(event, "description"),
     type: cyclingType(event) ?? "Ride",
-    indoor: event.indoor === true,
+    indoor: normalizedIndoor(event),
   });
 }
 
@@ -494,14 +499,29 @@ export function registerSplitReconciliationTools(server: McpServer, client: Inte
       const createdEventIds: string[] = [];
       try {
         const candidates = await loadCandidates(client, date, max_gap_minutes ?? 90);
-        const candidate = candidates.find(item => String(item.event.id) === event_id
+        const previewCandidate = candidates.find(item => String(item.event.id) === event_id
           && item.activities.map(activity => String(activity.id)).join(",") === activity_ids.join(","));
-        if (!candidate) throw new Error("The previewed activity cluster is no longer available.");
-        if (!candidate.supported) throw new Error(`This workout cannot be reconciled safely: ${candidate.warnings.join(" ")}`);
-        if (await fingerprint(candidate) !== expectedFingerprint) throw new Error("The workout or activities changed after preview. Run the preview again.");
+        if (!previewCandidate) throw new Error("The previewed activity cluster is no longer available.");
+        if (!previewCandidate.supported) throw new Error(`This workout cannot be reconciled safely: ${previewCandidate.warnings.join(" ")}`);
+        if (await fingerprint(previewCandidate) !== expectedFingerprint) throw new Error("The workout or activities changed after preview. Run the preview again.");
 
-        originalEvent = candidate.event;
-        originalActivities = await Promise.all(activity_ids.map(id => client.get<RecordValue>(`/activity/${id}`)));
+        const detailedEvent = await client.get<RecordValue>(
+          `/athlete/${client.athleteId}/events/${event_id}`,
+        );
+        const detailedActivities = await Promise.all(
+          activity_ids.map(id => client.get<RecordValue>(`/activity/${id}`)),
+        );
+        const detailedCandidate = buildCandidate(detailedEvent, detailedActivities);
+        const detailedIds = detailedCandidate.activities.map(activity => String(activity.id));
+        if (!detailedCandidate.supported
+          || String(detailedCandidate.event.id) !== event_id
+          || detailedIds.join(",") !== activity_ids.join(",")
+          || await fingerprint(detailedCandidate) !== expectedFingerprint) {
+          throw new Error("The workout or activities changed after preview. Run the preview again.");
+        }
+
+        originalEvent = detailedEvent;
+        originalActivities = detailedActivities;
 
         for (const activity of originalActivities) {
           await client.put<RecordValue>(`/activity/${activity.id}`, { id: activity.id, paired_event_id: null });
@@ -509,13 +529,13 @@ export function registerSplitReconciliationTools(server: McpServer, client: Inte
 
         const firstEvent = await client.put<RecordValue>(
           `/athlete/${client.athleteId}/events/${event_id}`,
-          eventWritePayload(originalEvent, candidate.replacements[0]),
+          eventWritePayload(originalEvent, detailedCandidate.replacements[0]),
         );
         const eventIds = [String(firstEvent.id ?? event_id)];
-        for (let index = 1; index < candidate.replacements.length; index++) {
+        for (let index = 1; index < detailedCandidate.replacements.length; index++) {
           const created = await client.post<RecordValue>(
             `/athlete/${client.athleteId}/events`,
-            eventWritePayload(originalEvent, candidate.replacements[index]),
+            eventWritePayload(originalEvent, detailedCandidate.replacements[index]),
           );
           const createdId = String(created.id);
           createdEventIds.push(createdId);
@@ -527,27 +547,27 @@ export function registerSplitReconciliationTools(server: McpServer, client: Inte
           const updated = await client.put<RecordValue>(`/activity/${activity_ids[index]}`, {
             id: activity_ids[index],
             paired_event_id: Number(eventIds[index]),
-            name: candidate.replacements[index].name,
+            name: detailedCandidate.replacements[index].name,
           });
           pairings.push({
             activity_id: String(updated.id ?? activity_ids[index]),
             event_id: String(updated.paired_event_id ?? eventIds[index]),
-            name: updated.name ?? candidate.replacements[index].name,
+            name: updated.name ?? detailedCandidate.replacements[index].name,
             compliance: updated.compliance ?? null,
           });
         }
 
         for (let index = 0; index < pairings.length; index++) {
           const verified = await client.get<RecordValue>(`/activity/${activity_ids[index]}`);
-          if (String(verified.paired_event_id) !== eventIds[index] || verified.name !== candidate.replacements[index].name) {
+          if (String(verified.paired_event_id) !== eventIds[index] || verified.name !== detailedCandidate.replacements[index].name) {
             throw new Error(`Final verification failed for activity ${activity_ids[index]}.`);
           }
           const verifiedEvent = await client.get<RecordValue>(`/athlete/${client.athleteId}/events/${eventIds[index]}`);
-          if (verifiedEvent.name !== candidate.replacements[index].name
-            || numberField(verifiedEvent, "moving_time") !== candidate.replacements[index].moving_time
-            || verifiedEvent.description !== candidate.replacements[index].description
-            || stringField(verifiedEvent, "type") !== candidate.replacements[index].type
-            || Boolean(verifiedEvent.indoor) !== candidate.replacements[index].indoor) {
+          if (verifiedEvent.name !== detailedCandidate.replacements[index].name
+            || numberField(verifiedEvent, "moving_time") !== detailedCandidate.replacements[index].moving_time
+            || verifiedEvent.description !== detailedCandidate.replacements[index].description
+            || stringField(verifiedEvent, "type") !== detailedCandidate.replacements[index].type
+            || normalizedIndoor(verifiedEvent) !== detailedCandidate.replacements[index].indoor) {
             throw new Error(`Final verification failed for event ${eventIds[index]}.`);
           }
         }
