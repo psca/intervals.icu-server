@@ -1,6 +1,6 @@
 # intervals-mcp
 
-An MCP (Model Context Protocol) server for [intervals.icu](https://intervals.icu) training data. Provides 18 tools for accessing activities, athlete profiles and curves, wellness data, events/workouts, and weather analysis -- designed to be consumed by LLM-powered coaching assistants.
+An MCP (Model Context Protocol) server for [intervals.icu](https://intervals.icu) training data. Provides 24 tools for accessing activities, athlete profiles and curves, wellness data, events/workouts, split-workout reconciliation, weather analysis, and compact athlete-analysis workflows -- designed to be consumed by LLM-powered coaching assistants.
 
 Two modes:
 - **Remote managed** -- persistent public endpoint with GitHub and Google OAuth configured, plus per-user intervals.icu credentials
@@ -84,6 +84,10 @@ Use that page to update your intervals.icu athlete ID or API key, or to disconne
 | Tool | Description |
 |---|---|
 | `get_activities` | List activities with date range and filtering |
+| `get_weekly_snapshot` | Athlete-local week progress, pairing-derived completion status, and completed/planned totals by discipline |
+| `compare_similar_activities` | Compatible-session comparison with recent, median, and per-metric evidence; bike speed affects verdicts only on the same identified route |
+| `get_training_readiness` | HRV/RHR trends, actionable signals, future demand, and discipline load states using server-estimated CTL/ATL/TSB |
+| `get_discipline_trends` | 4-, 8-, and 12-week volume, fitness, efficiency, durability, and context-compatible curve evidence; load direction is not fitness direction |
 | `get_activity_details` | Detailed metrics for a single activity |
 | `get_activity_intervals` | Interval/lap data for structured workouts |
 | `get_activity_streams` | Full time-series data (power, HR, etc.) |
@@ -99,8 +103,17 @@ Use that page to update your intervals.icu athlete ID or API key, or to disconne
 | `get_events` | Planned workouts/events by date range |
 | `get_event_by_id` | Single event details |
 | `add_or_update_event` | Create or modify planned workouts |
+| `preview_split_workout_reconciliation` | Read-only preview of eligible easy continuous `Ride` or `VirtualRide` workouts split across same-day cycling activities; completed intensity above 80% is advisory |
+| `reconcile_split_workout` | Confirmed, fingerprint-protected event split, activity pairing, and activity rename workflow |
 | `delete_event` | Delete a single event |
 | `delete_events_by_date_range` | Delete all events in a date range |
+
+### Analysis semantics
+
+- `compare_similar_activities` selects only candidates with compatibility at least 70. Directional overall verdicts require at least two comparisons and at least two directional metrics with 60% agreement. Cycling speed is evidence only unless both activities use the same non-null route ID in `SAME_ROUTE` mode.
+- `get_training_readiness` is advisory. Its per-discipline CTL, ATL, and TSB are server estimates from activity load; a positive TSB caused by `LOW_RECENT_TRAINING` is not a positive readiness signal.
+- `get_discipline_trends` separates volume from fitness. `INCREASED`, `DECREASED`, and `STABLE` describe load direction only. Its top-level discipline summary uses the shortest requested window and reports that basis in `summary_window_weeks`; sparse periods and curve evidence cannot produce stable or directional aggregate verdicts. Trend values include explicit metric and unit labels. Races and unusually long sessions still count toward volume, but are excluded from ordinary efficiency cohorts.
+- `get_weekly_snapshot` derives pairing from `activity.paired_event_id`. It reports only `COMPLETED`, `UNPAIRED_COMPLETION`, `MISSED`, and `PLANNED`; unpaired activity compliance is `null`, and event descriptions are capped at 2,000 characters.
 
 ## Developer setup: remote worker
 

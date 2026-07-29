@@ -68,7 +68,7 @@ export function registerEventTools(server: McpServer, client: IntervalsClient): 
     async ({ event_id }) => {
       return withEventToolResult("fetching event", async () => {
         const event = await client.get<EventRecord>(
-          `/athlete/${client.athleteId}/event/${event_id}`
+          `/athlete/${client.athleteId}/events/${event_id}`
         );
         return textResult({ event });
       });

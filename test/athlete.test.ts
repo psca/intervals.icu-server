@@ -143,7 +143,7 @@ describe("registerAthleteTools", () => {
 
     expect(client.get).toHaveBeenCalledWith(
       "/athlete/i123/power-curves",
-      expect.objectContaining({ type: "Ride" }),
+      expect.objectContaining({ type: "Ride", curves: expect.stringMatching(/^r\.\d{4}-\d{2}-\d{2}\.\d{4}-\d{2}-\d{2}$/) }),
     );
     expectTextToMirrorStructuredContent(result as never);
     expect(result).toMatchObject({

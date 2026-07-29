@@ -7,6 +7,9 @@ import { registerActivityTools } from "./tools/activities.js";
 import { registerAthleteTools } from "./tools/athlete.js";
 import { registerEventTools } from "./tools/events.js";
 import { registerWellnessTools } from "./tools/wellness.js";
+import { registerWeeklySnapshotTool } from "./tools/weekly-snapshot.js";
+import { registerSplitReconciliationTools } from "./tools/split-reconciliation.js";
+import { registerAnalysisTools } from "./tools/analysis.js";
 import {
   AuthIdentity,
   AuthProvider,
@@ -860,6 +863,9 @@ const apiHandler = {
     registerAthleteTools(server, client);
     registerEventTools(server, client);
     registerWellnessTools(server, client);
+    registerWeeklySnapshotTool(server, client);
+    registerSplitReconciliationTools(server, client);
+    registerAnalysisTools(server, client);
 
     await server.connect(transport);
     return transport.handleRequest(request);

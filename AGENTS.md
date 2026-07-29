@@ -6,7 +6,7 @@
 
 ## Project overview
 
-TypeScript Cloudflare Worker implementing an MCP server for intervals.icu training data. Provides 18 tools for activities, athlete profiles and curves, wellness, events, and weather analysis. Access is controlled by GitHub or Google OAuth. Each provider identity maps to a separate account ID of the form `<provider>:<stable-subject>`. Users provide their own intervals.icu athlete ID and API key, collected during first-time OAuth via `/configure` and stored AES-256-GCM encrypted in OAUTH_KV.
+TypeScript Cloudflare Worker implementing an MCP server for intervals.icu training data. Provides 24 tools for activities, athlete profiles and curves, wellness, events, split-workout reconciliation, weather analysis, and compact athlete-analysis workflows. Access is controlled by GitHub or Google OAuth. Each provider identity maps to a separate account ID of the form `<provider>:<stable-subject>`. Users provide their own intervals.icu athlete ID and API key, collected during first-time OAuth via `/configure` and stored AES-256-GCM encrypted in OAUTH_KV.
 
 ## Tech stack
 
@@ -33,6 +33,8 @@ src/auth.ts           -- OAuth helpers: provider URL construction, code exchange
 src/crypto.ts         -- HKDF+AES-GCM utilities: hexToBytes, encryptApiKey, decryptApiKey
                          (per-user credential encryption using CREDENTIALS_MASTER_KEY)
 src/client.ts         -- IntervalsClient: HTTP client with Basic auth for intervals.icu API
+src/analysis.ts       -- Pure shared analysis helpers: discipline/zone normalization, load labels and spikes,
+                         context comparability, evidence sufficiency, and date/statistical utilities
 src/formatting.ts     -- 5 pure functions that format API responses into human-readable text
 src/weather.ts        -- Pure weather utilities + computeActivityWeather pipeline (Open-Meteo)
 src/utils.ts          -- Shared utilities: defaultDateRange() and toolHandler() wrapper
@@ -42,6 +44,9 @@ src/tools/            -- Tool registration files (one per domain)
   athlete.ts          -- 6 tools: profile, search, power/pace/HR curves, gear
   events.ts           -- 5 tools: list, get, create/update, delete, delete by range
   wellness.ts         -- 1 tool: wellness data (HRV, CTL/ATL/TSB, sleep)
+  weekly-snapshot.ts  -- 1 tool: athlete-local weekly activity/event progress, safe pairing statuses, aggregates
+  split-reconciliation.ts -- 2 tools: preview and confirmed post-activity split-workout reconciliation
+  analysis.ts         -- 3 tools: similar-session comparison, readiness, and discipline trends
 openapi-spec.json     -- OpenAPI reference for intervals.icu endpoints
 scripts/              -- Helper scripts for manual endpoint checks
   test-new-endpoints.sh
@@ -54,10 +59,13 @@ test/                 -- Unit tests (vitest)
   client.test.ts      -- IntervalsClient unit tests
   crypto.test.ts      -- HKDF+AES-GCM encryption unit tests
   athlete.test.ts     -- Athlete tool formatter + endpoint contract unit tests
+  analysis.test.ts    -- Analysis-tool semantic safeguards and evidence/context unit tests
   events.test.ts      -- Event tool contracts and safety behavior unit tests
   formatting.test.ts  -- Response formatting unit tests
   stdio.test.ts       -- 4 tests: tool count, tool names, missing credential errors
   weather.test.ts     -- Weather pipeline unit tests
+  weekly-snapshot.test.ts -- Weekly progress, pairing, aggregate, and description-cap unit tests
+  split-reconciliation.test.ts -- Detection, proportional allocation, structure splitting, stale preview, and pairing tests
   __mocks__/cloudflare-workers.ts -- WorkerEntrypoint stub for vitest
 ```
 
@@ -79,7 +87,9 @@ test/                 -- Unit tests (vitest)
 - **Weather pipeline:** `get_activity_weather` does everything server-side: fetches GPS streams, calls Open-Meteo (forecast or archive based on age), computes per-waypoint headwind/tailwind using circular bearing math.
 - **Circular math:** Wind direction averaging uses trigonometric circular mean (atan2 of sin/cos sums). Headwind detection uses `(... + 360) % 360` to handle JS negative modulo.
 - **Athlete tools:** `src/tools/athlete.ts` adds read-only profile/search/curve/gear endpoints used by the coach skill for zone resolution and benchmark lookup. `sportSettings` entries use `types[]` arrays, not a single `type` field, and swim threshold pace should be interpreted as `/100m` pace when `pace_units === "SECS_100M"`.
-- **stdio entry point:** `src/stdio.ts` exports `createStdioServer(apiKey, athleteId)` — validates credentials, registers all 18 tools, connects `StdioServerTransport`. When run directly (`npm run stdio`), reads `API_KEY` and `ATHLETE_ID` from `process.env`. The CF Worker entry point (`src/index.ts`) is not affected.
+- **Analysis semantics:** `src/analysis.ts` centralizes zone normalization, context comparability, evidence sufficiency, load labels, and load-spike calculations. Bike speed is informational outside `SAME_ROUTE` comparisons with a shared non-null route ID. Load `INCREASED`/`DECREASED` is volume direction, never a fitness verdict. Server-estimated discipline CTL/ATL/TSB must not turn `LOW_RECENT_TRAINING` into a positive readiness signal. Discipline trend summaries use the shortest requested window, expose that choice as `summary_window_weeks`, and require both periods to meet the minimum session count before returning a directional or stable summary. Sparse curve periods remain visible but their aggregate threshold status is `INSUFFICIENT_DATA`.
+- **Weekly snapshot semantics:** Pairing is derived from `activity.paired_event_id`; statuses are only `COMPLETED`, `UNPAIRED_COMPLETION`, `MISSED`, or `PLANNED`. Unpaired activity `compliance` is `null`; do not introduce `PARTIALLY_COMPLETED` until upstream semantics are documented. Event descriptions remain enabled and capped at 2,000 characters; do not add wellness data to the weekly calendar.
+- **stdio entry point:** `src/stdio.ts` exports `createStdioServer(apiKey, athleteId)` — validates credentials, registers all 24 tools, connects `StdioServerTransport`. When run directly (`npm run stdio`), reads `API_KEY` and `ATHLETE_ID` from `process.env`. The CF Worker entry point (`src/index.ts`) is not affected.
 - **No auth in stdio mode:** Credentials are passed directly as env vars by the MCP client. OAuth is CF Worker only.
 
 ## Commands

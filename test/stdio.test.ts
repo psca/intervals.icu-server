@@ -18,13 +18,13 @@ describe("createStdioServer", () => {
     vi.clearAllMocks();
   });
 
-  it("creates an McpServer with all 18 tools registered", async () => {
+  it("creates an McpServer with all 24 tools registered", async () => {
     const server = await createStdioServer("test-api-key", "i123");
 
     // McpServer exposes registered tools via _registeredTools (plain object)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const tools = (server as any)._registeredTools as Record<string, unknown>;
-    expect(Object.keys(tools).length).toBe(18);
+    expect(Object.keys(tools).length).toBe(24);
   });
 
   it("registers all expected tool names", async () => {
@@ -35,6 +35,7 @@ describe("createStdioServer", () => {
 
     expect(names).toEqual([
       "add_or_update_event",
+      "compare_similar_activities",
       "delete_event",
       "delete_events_by_date_range",
       "get_activities",
@@ -44,13 +45,18 @@ describe("createStdioServer", () => {
       "get_activity_streams",
       "get_activity_weather",
       "get_athlete_profile",
+      "get_discipline_trends",
       "get_event_by_id",
       "get_events",
       "get_gear",
       "get_hr_curves",
       "get_pace_curves",
       "get_power_curves",
+      "get_training_readiness",
+      "get_weekly_snapshot",
       "get_wellness_data",
+      "preview_split_workout_reconciliation",
+      "reconcile_split_workout",
       "search_activities",
     ]);
   });
