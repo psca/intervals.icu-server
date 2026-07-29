@@ -22,7 +22,7 @@ TypeScript Cloudflare Worker implementing an MCP server for intervals.icu traini
 
 ```
 src/index.ts          -- CF Worker entry point; OAuthProvider as default export
-                         defaultHandler: handles /authorize, /login, /callback, /configure (GET+POST),
+                         defaultHandler: handles /, /help, /authorize, /login, /callback, /configure (GET+POST),
                            /settings, /settings/save, /settings/disconnect,
                            /settings/disconnected
                          apiHandler: handles /mcp (only reached after Bearer token validation)
@@ -40,7 +40,7 @@ src/weather.ts        -- Pure weather utilities + computeActivityWeather pipelin
 src/utils.ts          -- Shared utilities: defaultDateRange() and toolHandler() wrapper
                          (toolHandler wraps tool logic in try/catch, returns MCP text content)
 src/tools/            -- Tool registration files (one per domain)
-  activities.ts       -- 6 tools: list, details, intervals, streams, sampled streams, weather
+  activities.ts       -- 6 tools: list, details, intervals, streams, route, weather
   athlete.ts          -- 6 tools: profile, search, power/pace/HR curves, gear
   events.ts           -- 5 tools: list, get, create/update, delete, delete by range
   wellness.ts         -- 1 tool: wellness data (HRV, CTL/ATL/TSB, sleep)
@@ -77,10 +77,10 @@ test/                 -- Unit tests (vitest)
 - **Open access:** Any GitHub or Google user can authenticate. Access is gated by valid intervals.icu credentials, not an allowlist.
 - **Unified callback:** Both MCP OAuth and settings OAuth redirect to `/callback`. The handler checks `oauth_state:<id>` first; if not found, tries `settings_state:<id>` to determine the flow.
 - **OAuth state:** During `/authorize`, a UUID state ID is stored in KV (`oauth_state:<id>`) with a 10-minute TTL, carrying the `oauthReqInfo` through the provider round-trip.
-- **KV key patterns:** `oauth_state:<uuid>` (10min TTL, {oauthReqInfo, provider?}), `settings_state:<uuid>` (10min TTL, {flow, provider?}), `configure_state:<uuid>` (10min TTL, {oauthReqInfo, identity, accountId}), `credentials:<accountId>` (no TTL, {athleteId, encryptedApiKey, iv}), `settings_session:<uuid>` (1hr TTL, {accountId, identity}).
+- **KV key patterns:** `oauth_state:<uuid>` (10min TTL, {oauthReqInfo, provider?}), `settings_state:<uuid>` (10min TTL, {flow, provider?}), `configure_state:<uuid>` (10min TTL, {oauthReqInfo, identity, accountId}), `credentials:<accountId>` (no TTL, {athleteId, encryptedApiKey, iv}), `settings_session:<uuid>` (7-day TTL, {accountId, identity}).
 - **Per-user credentials:** `apiHandler` reads `credentials:<accountId>` from KV using the provider-scoped account ID in OAuth props, decrypts the API key with an HKDF-derived per-user key, then creates `IntervalsClient`. Returns 401 with a `/settings` link if credentials are missing.
 - **Credential collection flow:** First-time OAuth redirects to `/configure` (form) after provider auth. Returning users with stored credentials complete authorization directly. `/settings` provides a separate provider-login mini-loop to update credentials without re-authorizing MCP clients.
-- **Settings session expiry:** If the `settings_session` cookie exists but the KV entry has expired (1hr TTL), `GET /settings` restarts provider OAuth rather than returning a 401 so users can recover cleanly.
+- **Settings session expiry:** If the `settings_session` cookie exists but the KV entry has expired (7-day TTL), `GET /settings` restarts provider OAuth rather than returning a 401 so users can recover cleanly.
 - **Shared page CSS:** All HTML responses use a `PAGE_CSS` constant exported from `src/styles.ts`. Edit it there to restyle all pages at once.
 - **Error handling:** Every tool wraps logic in try/catch and returns error text to the MCP client (never crashes the Worker).
 - **Sampling logic:** `computeSampleIndices()` in `activities.ts` handles time-based downsampling for GPS streams. Auto-injects `time` stream type when not requested.
@@ -89,6 +89,7 @@ test/                 -- Unit tests (vitest)
 - **Athlete tools:** `src/tools/athlete.ts` adds read-only profile/search/curve/gear endpoints used by the coach skill for zone resolution and benchmark lookup. `sportSettings` entries use `types[]` arrays, not a single `type` field, and swim threshold pace should be interpreted as `/100m` pace when `pace_units === "SECS_100M"`.
 - **Analysis semantics:** `src/analysis.ts` centralizes zone normalization, context comparability, evidence sufficiency, load labels, and load-spike calculations. Bike speed is informational outside `SAME_ROUTE` comparisons with a shared non-null route ID. Load `INCREASED`/`DECREASED` is volume direction, never a fitness verdict. Server-estimated discipline CTL/ATL/TSB must not turn `LOW_RECENT_TRAINING` into a positive readiness signal. Discipline trend summaries use the shortest requested window, expose that choice as `summary_window_weeks`, and require both periods to meet the minimum session count before returning a directional or stable summary. Sparse curve periods remain visible but their aggregate threshold status is `INSUFFICIENT_DATA`.
 - **Weekly snapshot semantics:** Pairing is derived from `activity.paired_event_id`; statuses are only `COMPLETED`, `UNPAIRED_COMPLETION`, `MISSED`, or `PLANNED`. Unpaired activity `compliance` is `null`; do not introduce `PARTIALLY_COMPLETED` until upstream semantics are documented. Event descriptions remain enabled and capped at 2,000 characters; do not add wellness data to the weekly calendar.
+- **Split reconciliation:** Treat `Ride` and `VirtualRide` as one cycling family; planned indoor metadata is not a gate and completed intensity above 80% or missing is advisory only. Never invent an override. Apply only after explicit athlete approval with the exact preview fingerprint. The handler rebuilds the candidate from detailed current records before the first write; failed applies report rollback complete only after read-back verification, and an event create without a usable ID remains an incomplete rollback.
 - **stdio entry point:** `src/stdio.ts` exports `createStdioServer(apiKey, athleteId)` — validates credentials, registers all 24 tools, connects `StdioServerTransport`. When run directly (`npm run stdio`), reads `API_KEY` and `ATHLETE_ID` from `process.env`. The CF Worker entry point (`src/index.ts`) is not affected.
 - **No auth in stdio mode:** Credentials are passed directly as env vars by the MCP client. OAuth is CF Worker only.
 
@@ -101,6 +102,10 @@ npm run dev        # local dev server (wrangler dev)
 npm run deploy     # deploy to Cloudflare (wrangler deploy)
 npm run stdio      # run stdio MCP server locally (requires API_KEY + ATHLETE_ID env vars)
 ```
+
+## Local OAuth Worker development
+
+`npm run dev` runs the Worker locally at `http://localhost:8787` with local Wrangler KV state. Use separate development GitHub and Google OAuth clients with the redirect URI `http://localhost:8787/callback`; do not replace production OAuth callbacks. Put the local client IDs, provider secrets, and a generated `CREDENTIALS_MASTER_KEY` in ignored `.dev.vars`. Use `/settings` to complete local provider sign-in and credential setup; `/mcp` is the local MCP endpoint.
 
 ## Secrets
 
