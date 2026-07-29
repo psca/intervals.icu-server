@@ -14,6 +14,7 @@ Two modes:
 - [What to expect during sign-in](#what-to-expect-during-sign-in)
 - [Updating your intervals.icu credentials](#updating-your-intervalsicu-credentials)
 - [Developer setup: remote worker](#developer-setup-remote-worker)
+- [Developer setup: local OAuth Worker](#developer-setup-local-oauth-worker)
 - [Developer setup: local stdio](#developer-setup-local-stdio)
 - [Tools](#tools)
 - [Architecture](#architecture)
@@ -115,6 +116,13 @@ Use that page to update your intervals.icu athlete ID or API key, or to disconne
 - `get_discipline_trends` separates volume from fitness. `INCREASED`, `DECREASED`, and `STABLE` describe load direction only. Its top-level discipline summary uses the shortest requested window and reports that basis in `summary_window_weeks`; sparse periods and curve evidence cannot produce stable or directional aggregate verdicts. Trend values include explicit metric and unit labels. Races and unusually long sessions still count toward volume, but are excluded from ordinary efficiency cohorts.
 - `get_weekly_snapshot` derives pairing from `activity.paired_event_id`. It reports only `COMPLETED`, `UNPAIRED_COMPLETION`, `MISSED`, and `PLANNED`; unpaired activity compliance is `null`, and event descriptions are capped at 2,000 characters.
 
+### Split-workout reconciliation safety
+
+- Planned and completed `Ride` and `VirtualRide` records are one cycling family. Planned indoor metadata is not an eligibility gate; replacement events use each completed activity's type and indoor state.
+- Completed intensity above 80%, or a missing intensity value, is advisory only. There is no override parameter.
+- `reconcile_split_workout` requires explicit approval and the preview fingerprint. Before the first write, it rebuilds the candidate from current detailed event and activity records; a mismatch makes zero changes.
+- If an apply fails, rollback is reported complete only after the original event and activities are read back and verified. A create response without a usable ID is treated as ambiguous and therefore incomplete.
+
 ## Developer setup: remote worker
 
 This section is for operators who want to deploy their own hosted worker.
@@ -206,6 +214,36 @@ On first connection, your MCP client will open a browser window for provider log
 
 GitHub and Google identities are separate accounts. Existing credentials from versions that only used GitHub usernames are not migrated; reconnect and re-enter intervals.icu credentials after upgrading.
 
+## Developer setup: local OAuth Worker
+
+Use this mode to exercise the Cloudflare Worker OAuth flow locally. It uses local Wrangler KV state and does not read or modify the deployed Worker's credentials.
+
+1. Create separate development GitHub and Google OAuth clients. Keep the production OAuth app callbacks unchanged. Configure both development clients with this redirect URI:
+
+   ```text
+   http://localhost:8787/callback
+   ```
+
+2. Create the ignored `.dev.vars` file:
+
+   ```dotenv
+   CREDENTIALS_MASTER_KEY=<output of openssl rand -hex 32>
+   GITHUB_CLIENT_ID=<local GitHub OAuth client ID>
+   GITHUB_CLIENT_SECRET=<local GitHub OAuth client secret>
+   GOOGLE_CLIENT_ID=<local Google OAuth client ID>
+   GOOGLE_CLIENT_SECRET=<local Google OAuth client secret>
+   ```
+
+3. Start the Worker:
+
+   ```bash
+   npm run dev
+   ```
+
+4. Open `http://localhost:8787/settings`, choose GitHub or Google, and enter the intervals.icu Athlete ID and API key. The local MCP endpoint is `http://localhost:8787/mcp`.
+
+An MCP client must be able to reach the local Worker. Hosted clients generally cannot reach `localhost`; use a local client or the stdio mode below for those workflows.
+
 ## Developer setup: local stdio
 
 No cloud account needed. Runs as a local process, communicates with your MCP client over stdio.
@@ -251,23 +289,25 @@ The MCP client will spawn the server automatically.
 src/
   index.ts              CF Worker entry point -- OAuthProvider wraps apiHandler + defaultHandler
   stdio.ts              Node.js stdio entry point -- spawned by local MCP clients
+  analysis.ts            Pure shared analysis helpers for comparison, readiness, and trends
+  styles.ts              Shared HTML page styles for OAuth, settings, and help pages
   auth.ts               OAuth helpers (provider auth URLs, code exchange, identity lookup, validate intervals credentials)
   crypto.ts             HKDF+AES-GCM per-user credential encryption
   client.ts             intervals.icu HTTP client with Basic auth
   formatting.ts         Human-readable formatters for activities, intervals, events, wellness
   weather.ts            Open-Meteo integration + headwind/tailwind computation
   tools/
-    activities.ts       6 activity tools (including weather pipeline)
-    athlete.ts          6 athlete tools (profile, search, curves, gear)
-    events.ts           5 event/workout tools
-    wellness.ts         1 wellness tool
+    activities.ts       6 tools: list, details, intervals, streams, route, weather
+    athlete.ts          6 tools: profile, search, power/pace/HR curves, gear
+    events.ts           5 tools: list, get, create/update, delete, delete by range
+    wellness.ts         1 tool: wellness data
+    weekly-snapshot.ts  1 tool: athlete-local weekly progress and pairing statuses
+    split-reconciliation.ts 2 tools: preview and confirmed reconciliation
+    analysis.ts         3 tools: similar activity comparison, readiness, discipline trends
 test/
-  stdio.test.ts         stdio entry point unit tests
-  index.test.ts         OAuth flow + apiHandler integration tests
-  auth.test.ts          OAuth helper unit tests
-  client.test.ts        Client unit tests
-  formatting.test.ts    Formatter tests
-  weather.test.ts       Weather utility tests
+  activities.test.ts, athlete.test.ts, analysis.test.ts, auth.test.ts, client.test.ts,
+  crypto.test.ts, events.test.ts, formatting.test.ts, index.test.ts, stdio.test.ts,
+  weather.test.ts, weekly-snapshot.test.ts, split-reconciliation.test.ts, wellness.test.ts
 ```
 
 **Stateless design** -- each request creates a fresh MCP server instance. No Durable Objects or session state required. OAuth tokens and encrypted per-user credentials are stored in Cloudflare KV.
