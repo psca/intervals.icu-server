@@ -103,11 +103,15 @@ Use that page to update your intervals.icu athlete ID or API key, or to disconne
 | `get_wellness_data` | HRV, resting HR, CTL/ATL/TSB, sleep, weight |
 | `get_events` | Planned workouts/events by date range |
 | `get_event_by_id` | Single event details |
-| `add_or_update_event` | Create or modify planned workouts |
+| `add_or_update_event` | Create or modify planned workouts, with optional athlete-local `start_date_local` scheduling (`YYYY-MM-DDTHH:mm:ss`) |
 | `preview_split_workout_reconciliation` | Read-only preview of eligible easy continuous `Ride` or `VirtualRide` workouts split across same-day cycling activities; completed intensity above 80% is advisory |
 | `reconcile_split_workout` | Confirmed, fingerprint-protected event split, activity pairing, and activity rename workflow |
 | `delete_event` | Delete a single event |
 | `delete_events_by_date_range` | Delete all events in a date range |
+
+Planned event writes accept either the backward-compatible date-only `start_date`
+or `start_date_local` for a specific wall-clock time in the athlete timezone configured
+in Intervals.icu. Do not append `Z` or a UTC offset to `start_date_local`.
 
 ### Analysis semantics
 
