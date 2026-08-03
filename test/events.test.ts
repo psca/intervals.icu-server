@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { createStdioServer } from "../src/stdio";
+import { localTimestampSchema } from "../src/tools/events";
 
 vi.mock("@modelcontextprotocol/sdk/server/stdio.js", () => ({
   StdioServerTransport: vi.fn().mockImplementation(() => ({
@@ -24,6 +25,17 @@ async function callTool(server: any, toolName: string, args: Record<string, unkn
 function expectTextToMirrorStructuredContent(result: { content: { type: "text"; text: string }[]; structuredContent: unknown }) {
   expect(result.content[0]?.type).toBe("text");
   expect(JSON.parse(result.content[0]?.text ?? "")).toEqual(result.structuredContent);
+}
+
+function successfulEventFetch(capture: (body: Record<string, unknown>) => void) {
+  return vi.fn().mockImplementation((_url: string, init?: RequestInit) => {
+    capture(JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>);
+    return Promise.resolve({
+      ok: true,
+      json: () => Promise.resolve({ id: 123, name: "Ride", type: "Ride", category: "WORKOUT" }),
+      text: () => Promise.resolve(""),
+    });
+  });
 }
 
 describe("event tools", () => {
@@ -68,9 +80,81 @@ describe("event tools", () => {
     expect(requestBody).toContain("\"load_target\":72");
     expect(requestBody).toContain("\"indoor\":true");
     expect(requestBody).toContain("\"athlete_cannot_edit\":true");
+    expect(JSON.parse(requestBody).start_date_local).toBe("2026-06-01T00:00:00");
     expectTextToMirrorStructuredContent(result as never);
     expect(result.structuredContent.action).toBe("created");
     expect(result.structuredContent.event.type).toBe("VirtualRide");
+  });
+
+  it("creates an event at an athlete-local start time", async () => {
+    let body: Record<string, unknown> = {};
+    vi.stubGlobal("fetch", successfulEventFetch(value => { body = value; }));
+    const server = await createStdioServer("test-key", "i123");
+
+    await callTool(server, "add_or_update_event", {
+      name: "Evening Ride", type: "Ride", start_date_local: "2026-08-04T19:00:00",
+    });
+
+    expect(body.start_date_local).toBe("2026-08-04T19:00:00");
+  });
+
+  it("updates an event at an athlete-local start time", async () => {
+    let body: Record<string, unknown> = {};
+    vi.stubGlobal("fetch", successfulEventFetch(value => { body = value; }));
+    const server = await createStdioServer("test-key", "i123");
+
+    await callTool(server, "add_or_update_event", {
+      event_id: "123", name: "Evening Ride", type: "Ride", start_date_local: "2026-08-04T19:40:00",
+    });
+
+    expect(body.start_date_local).toBe("2026-08-04T19:40:00");
+  });
+
+  it("prefers start_date_local when both date inputs are supplied", async () => {
+    let body: Record<string, unknown> = {};
+    vi.stubGlobal("fetch", successfulEventFetch(value => { body = value; }));
+    const server = await createStdioServer("test-key", "i123");
+
+    await callTool(server, "add_or_update_event", {
+      name: "Ride", type: "Ride", start_date: "2026-08-05", start_date_local: "2026-08-04T20:15:00",
+    });
+
+    expect(body.start_date_local).toBe("2026-08-04T20:15:00");
+  });
+
+  it("omits start_date_local when an update supplies neither date field", async () => {
+    let body: Record<string, unknown> = {};
+    vi.stubGlobal("fetch", successfulEventFetch(value => { body = value; }));
+    const server = await createStdioServer("test-key", "i123");
+
+    await callTool(server, "add_or_update_event", {
+      event_id: "123", name: "Renamed Ride", type: "Ride",
+    });
+
+    expect(body).not.toHaveProperty("start_date_local");
+  });
+
+  it("maps a date-only update to athlete-local midnight", async () => {
+    let body: Record<string, unknown> = {};
+    vi.stubGlobal("fetch", successfulEventFetch(value => { body = value; }));
+    const server = await createStdioServer("test-key", "i123");
+
+    await callTool(server, "add_or_update_event", {
+      event_id: "123", name: "Ride", type: "Ride", start_date: "2026-06-02",
+    });
+
+    expect(body.start_date_local).toBe("2026-06-02T00:00:00");
+  });
+
+  it.each([
+    "2026-08-04",
+    "2026-08-04T19:00",
+    "2026-08-04T19:00:00Z",
+    "2026-08-04T19:00:00+01:00",
+    "2026-02-30T19:00:00",
+    "2026-08-04T24:00:00",
+  ])("rejects invalid athlete-local timestamp %s", value => {
+    expect(() => localTimestampSchema.parse(value)).toThrow();
   });
 
   it("supports legacy workout_type input for backwards compatibility", async () => {

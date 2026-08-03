@@ -9,6 +9,33 @@ const eventObjectSchema = z.record(z.string(), z.unknown());
 
 const targetMetricSchema = z.enum(["AUTO", "POWER", "HR", "PACE"]);
 
+export const localTimestampSchema = z.string().superRefine((value, context) => {
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})$/.exec(value);
+  if (!match) {
+    context.addIssue({ code: "custom", message: "Expected YYYY-MM-DDTHH:mm:ss without a timezone suffix" });
+    return;
+  }
+  const [, year, month, day, hour, minute, second] = match;
+  const date = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day), Number(hour), Number(minute), Number(second)));
+  const valid = date.getUTCFullYear() === Number(year)
+    && date.getUTCMonth() === Number(month) - 1
+    && date.getUTCDate() === Number(day)
+    && date.getUTCHours() === Number(hour)
+    && date.getUTCMinutes() === Number(minute)
+    && date.getUTCSeconds() === Number(second);
+  if (!valid) context.addIssue({ code: "custom", message: "Invalid local date or time" });
+});
+
+function resolveStartDateLocal(
+  startDateLocal: string | undefined,
+  startDate: string | undefined,
+  isUpdate: boolean,
+): string | undefined {
+  if (startDateLocal) return startDateLocal;
+  if (startDate) return `${startDate}T00:00:00`;
+  return isUpdate ? undefined : `${new Date().toISOString().slice(0, 10)}T00:00:00`;
+}
+
 function stripUndefinedFields(value: EventRecord): EventRecord {
   return Object.fromEntries(Object.entries(value).filter(([, fieldValue]) => fieldValue !== undefined));
 }
@@ -158,6 +185,9 @@ export function registerEventTools(server: McpServer, client: IntervalsClient): 
         workout_type: z.string().optional().describe("Legacy alias for type. Preserved for backwards compatibility."),
         category: z.string().optional().describe("Event category, e.g. WORKOUT, RACE_A, RACE_B, RACE_C, NOTE. Defaults to WORKOUT."),
         start_date: z.string().optional().describe("Date YYYY-MM-DD (default: today)"),
+        start_date_local: localTimestampSchema.optional().describe(
+          "Athlete-local start time YYYY-MM-DDTHH:mm:ss in the timezone configured in Intervals.icu; do not append Z or an offset"
+        ),
         event_id: z.string().optional().describe("Provide to update an existing event"),
         moving_time: z.number().int().optional().describe("Expected duration in seconds"),
         distance: z.number().optional().describe("Expected distance in metres"),
@@ -208,6 +238,7 @@ export function registerEventTools(server: McpServer, client: IntervalsClient): 
       workout_type,
       category,
       start_date,
+      start_date_local,
       event_id,
       moving_time,
       distance,
@@ -242,9 +273,8 @@ export function registerEventTools(server: McpServer, client: IntervalsClient): 
           throw new Error("Either 'type' or legacy 'workout_type' is required.");
         }
 
-        const date = start_date ?? new Date().toISOString().slice(0, 10);
         const eventData = stripUndefinedFields({
-          start_date_local: `${date}T00:00:00`,
+          start_date_local: resolveStartDateLocal(start_date_local, start_date, Boolean(event_id)),
           category: category ?? "WORKOUT",
           name,
           type: resolvedType,
