@@ -219,6 +219,131 @@ function compactSavedWorkout(raw: RecordValue): RecordValue {
 }
 
 // ---------------------------------------------------------------------------
+// Scheduling helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Add days to a YYYY-MM-DD date using UTC calendar component arithmetic.
+ * Never treats athlete-local dates as instants.
+ */
+export function addDays(date: string, days: number): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date);
+  if (!match) {
+    throw new Error(`Invalid date format: "${date}". Expected YYYY-MM-DD.`);
+  }
+  const [, yearStr, monthStr, dayStr] = match;
+  const y = Number(yearStr);
+  const m = Number(monthStr);
+  const d = Number(dayStr);
+  const dt = new Date(Date.UTC(y, m - 1, d + days));
+  const resY = dt.getUTCFullYear();
+  const resM = String(dt.getUTCMonth() + 1).padStart(2, "0");
+  const resD = String(dt.getUTCDate()).padStart(2, "0");
+  return `${resY}-${resM}-${resD}`;
+}
+
+const TIME_REGEX = /^(\d{2}):(\d{2})(:(\d{2}))?$/;
+
+function validateAndNormalizeTime(time: string, label: string): string {
+  const match = TIME_REGEX.exec(time);
+  if (!match) {
+    throw new Error(`Invalid time format for ${label}: "${time}". Expected HH:mm or HH:mm:ss.`);
+  }
+  const [, hStr, mStr, , sStr] = match;
+  const h = Number(hStr);
+  const m = Number(mStr);
+  const s = sStr !== undefined ? Number(sStr) : 0;
+  if (h < 0 || h > 23 || m < 0 || m > 59 || s < 0 || s > 59) {
+    throw new Error(`Invalid time values for ${label}: "${time}".`);
+  }
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${pad(h)}:${pad(m)}:${pad(s)}`;
+}
+
+/**
+ * Resolve workout start time with precedence:
+ * 1. Saved workout time (if present and valid)
+ * 2. Default start time (if present and valid)
+ * 3. Fallback to "00:00:00" (midnight)
+ */
+export function resolveWorkoutTime(
+  savedTime?: string | null,
+  defaultTime?: string | null,
+): string {
+  if (savedTime != null && savedTime !== "") {
+    return validateAndNormalizeTime(savedTime, "saved workout time");
+  }
+  if (defaultTime != null && defaultTime !== "") {
+    return validateAndNormalizeTime(defaultTime, "default start time");
+  }
+  return "00:00:00";
+}
+
+function validateLocalTimestamp(timestamp: string, label = "timestamp"): void {
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})$/.exec(timestamp);
+  if (!match) {
+    throw new Error(
+      `Invalid ${label} "${timestamp}": expected YYYY-MM-DDTHH:mm:ss without a timezone suffix.`
+    );
+  }
+  const [, year, month, day, hour, minute, second] = match;
+  const date = new Date(
+    Date.UTC(Number(year), Number(month) - 1, Number(day), Number(hour), Number(minute), Number(second))
+  );
+  const valid =
+    date.getUTCFullYear() === Number(year) &&
+    date.getUTCMonth() === Number(month) - 1 &&
+    date.getUTCDate() === Number(day) &&
+    date.getUTCHours() === Number(hour) &&
+    date.getUTCMinutes() === Number(minute) &&
+    date.getUTCSeconds() === Number(second);
+  if (!valid) {
+    throw new Error(`Invalid local date or time for ${label}: "${timestamp}".`);
+  }
+}
+
+/** Allowlisted fields copied to a scheduled calendar event. */
+const EVENT_COPY_FIELDS = [
+  "name", "description", "type", "indoor", "color", "moving_time",
+  "icu_training_load", "target", "targets", "hide_from_athlete",
+  "carbs_per_hour", "sub_type", "distance", "tags", "for_week", "icu_intensity",
+] as const;
+
+/**
+ * Build a calendar event payload from a library workout source plus optional overrides.
+ */
+export function eventFromWorkout(
+  workout: RecordValue,
+  startDateLocal: string,
+  overrides: RecordValue = {},
+  plan?: { athlete_id: string; folder_id: number },
+): RecordValue {
+  const result: RecordValue = {
+    category: "WORKOUT",
+    start_date_local: startDateLocal,
+  };
+
+  for (const field of EVENT_COPY_FIELDS) {
+    const value = overrides[field] !== undefined ? overrides[field] : workout[field];
+    if (value !== undefined) {
+      result[field] = value;
+    }
+  }
+
+  if (overrides.calendar_id !== undefined) {
+    result.calendar_id = overrides.calendar_id;
+  }
+
+  if (plan) {
+    result.plan_athlete_id = plan.athlete_id;
+    result.plan_folder_id = plan.folder_id;
+    result.plan_workout_id = workout.id;
+  }
+
+  return result;
+}
+
+// ---------------------------------------------------------------------------
 // Tool registration
 // ---------------------------------------------------------------------------
 
@@ -636,6 +761,209 @@ export function registerLibraryTools(server: McpServer, client: IntervalsClient)
         });
       } catch (error) {
         return errorResult("deleting library item", error);
+      }
+    }
+  );
+
+  // ---- schedule_library -----------------------------------------------------
+  server.registerTool(
+    "schedule_library",
+    {
+      description:
+        "Schedule workouts or a complete plan from the athlete's private library onto the calendar. " +
+        "Supports two modes:\n" +
+        "- WORKOUTS: schedule up to 100 individual library workouts by ID with athlete-local timestamps " +
+        "(YYYY-MM-DDTHH:mm:ss). Supports per-workout name and calendar overrides.\n" +
+        "- PLAN: schedule all workouts in a plan starting from start_date (YYYY-MM-DD). Adds zero-based " +
+        "day offsets; saved workout times take precedence over optional default_start_time (fallback: 00:00:00).\n" +
+        "Validates all items before performing a single bulk calendar write.",
+      inputSchema: {
+        mode: z
+          .enum(["WORKOUTS", "PLAN"])
+          .describe("Scheduling mode: WORKOUTS for individual workouts, PLAN for a whole plan"),
+        workouts: z
+          .array(
+            z.object({
+              workout_id: z.number().int().describe("Library workout ID"),
+              start_date_local: z
+                .string()
+                .describe("Athlete-local timestamp YYYY-MM-DDTHH:mm:ss without timezone offset"),
+              name: z.string().optional().describe("Optional name override for the calendar event"),
+              calendar_id: z
+                .union([z.number().int(), z.string()])
+                .optional()
+                .describe("Optional destination calendar ID"),
+            })
+          )
+          .optional()
+          .describe("WORKOUTS mode only: list of workouts to schedule (1 to 100 items)"),
+        plan_id: z.number().int().optional().describe("PLAN mode only: ID of the plan container to schedule"),
+        start_date: z.string().optional().describe("PLAN mode only: plan start date YYYY-MM-DD"),
+        start_date_local: z.string().optional().describe("PLAN mode alias for start_date"),
+        default_start_time: z
+          .string()
+          .optional()
+          .describe("PLAN mode only: default start time HH:mm or HH:mm:ss (fallback: 00:00:00)"),
+        calendar_id: z
+          .union([z.number().int(), z.string()])
+          .optional()
+          .describe("PLAN mode only: destination calendar ID"),
+      },
+      outputSchema: {
+        mode: z.enum(["WORKOUTS", "PLAN"]),
+        scheduled_count: z.number().int(),
+        scheduled: z.array(
+          z.object({
+            workout_id: z.number().int(),
+            event_id: z.unknown(),
+            name: z.string(),
+            start_date_local: z.string(),
+          })
+        ),
+      },
+    },
+    async (input) => {
+      try {
+        const { mode, workouts, plan_id, start_date, start_date_local, default_start_time, calendar_id } = input;
+
+        let eventBodies: RecordValue[] = [];
+        let sourceWorkoutIds: number[] = [];
+
+        if (mode === "WORKOUTS") {
+          if (!workouts || !Array.isArray(workouts) || workouts.length === 0) {
+            throw new Error("workouts list is required and must contain between 1 and 100 items.");
+          }
+          if (workouts.length > 100) {
+            throw new Error(`workouts list contains ${workouts.length} items, exceeding the 100-item batch limit.`);
+          }
+
+          // Preflight validation: timestamps & duplicate checks
+          const seen = new Set<string>();
+          for (const w of workouts) {
+            validateLocalTimestamp(w.start_date_local, `workout ${w.workout_id} timestamp`);
+            const key = `${w.workout_id}@${w.start_date_local}`;
+            if (seen.has(key)) {
+              throw new Error(`Duplicate workout ${w.workout_id} at timestamp ${w.start_date_local}.`);
+            }
+            seen.add(key);
+          }
+
+          // Fetch full workouts before any write
+          const fetchedWorkouts = await Promise.all(
+            workouts.map((w) => client.get<RecordValue>(`/athlete/${client.athleteId}/workouts/${w.workout_id}`))
+          );
+
+          sourceWorkoutIds = workouts.map((w) => w.workout_id);
+          eventBodies = workouts.map((w, idx) =>
+            eventFromWorkout(fetchedWorkouts[idx], w.start_date_local, {
+              name: w.name,
+              calendar_id: w.calendar_id,
+            })
+          );
+        } else if (mode === "PLAN") {
+          if (plan_id == null) throw new Error("plan_id is required for PLAN mode.");
+          const rawStartDate = start_date ?? start_date_local;
+          if (!rawStartDate) throw new Error("start_date is required for PLAN mode.");
+
+          // Validate date format YYYY-MM-DD
+          const baseDateMatch = /^(\d{4})-(\d{2})-(\d{2})/.exec(rawStartDate);
+          if (!baseDateMatch) {
+            throw new Error(`Invalid start_date format: "${rawStartDate}". Expected YYYY-MM-DD.`);
+          }
+          const baseDate = baseDateMatch[0];
+          // Validate baseDate is valid calendar date
+          addDays(baseDate, 0);
+
+          // Resolve container and verify PLAN type
+          const container = await findContainer(client, plan_id);
+          if (container.type !== "PLAN") {
+            throw new Error(`Container ${plan_id} is a ${container.type}, not a PLAN.`);
+          }
+
+          // Retrieve workouts list
+          const allWorkouts = await client.get<RecordValue[]>(`/athlete/${client.athleteId}/workouts`);
+          const planWorkouts = (allWorkouts ?? []).filter(
+            (w) => (!w.athlete_id || w.athlete_id === client.athleteId) && w.folder_id === plan_id
+          );
+
+          if (planWorkouts.length === 0) {
+            throw new Error(`Plan ${plan_id} contains no workouts.`);
+          }
+          if (planWorkouts.length > 100) {
+            throw new Error(`Plan ${plan_id} contains ${planWorkouts.length} workouts, exceeding the 100-item batch limit.`);
+          }
+
+          // Preflight: validate day offsets, calculate timestamps, check duplicates
+          const calculatedTimestamps: string[] = [];
+          const seen = new Set<string>();
+
+          for (const w of planWorkouts) {
+            if (w.day === undefined || w.day === null || !Number.isInteger(w.day) || (w.day as number) < 0) {
+              throw new Error(`Plan workout ${w.id} has invalid day offset: ${String(w.day)}.`);
+            }
+            const eventDate = addDays(baseDate, w.day as number);
+            const time = resolveWorkoutTime(w.time as string | undefined | null, default_start_time);
+            const ts = `${eventDate}T${time}`;
+            validateLocalTimestamp(ts, `plan workout ${w.id} timestamp`);
+
+            const key = `${w.id}@${ts}`;
+            if (seen.has(key)) {
+              throw new Error(`Duplicate workout ${w.id} at timestamp ${ts}.`);
+            }
+            seen.add(key);
+            calculatedTimestamps.push(ts);
+          }
+
+          // Fetch full workouts
+          const fetchedWorkouts = await Promise.all(
+            planWorkouts.map((w) => client.get<RecordValue>(`/athlete/${client.athleteId}/workouts/${w.id}`))
+          );
+
+          sourceWorkoutIds = planWorkouts.map((w) => w.id as number);
+          eventBodies = fetchedWorkouts.map((w, idx) =>
+            eventFromWorkout(
+              w,
+              calculatedTimestamps[idx],
+              { calendar_id },
+              { athlete_id: client.athleteId, folder_id: plan_id }
+            )
+          );
+        } else {
+          throw new Error(`Unknown mode: ${String(mode)}`);
+        }
+
+        // Single bulk write
+        let created: RecordValue[];
+        try {
+          created = await client.post<RecordValue[]>(
+            `/athlete/${client.athleteId}/events/bulk`,
+            eventBodies,
+            {
+              upsertOnUid: "false",
+              updatePlanApplied: mode === "PLAN" ? "true" : "false",
+            }
+          );
+        } catch (postError) {
+          const msg = postError instanceof Error ? postError.message : String(postError);
+          throw new Error(
+            `Bulk scheduling outcome is unknown; verify the calendar before retrying. Upstream error: ${msg}`
+          );
+        }
+
+        const scheduled = (created ?? []).map((evt, idx) => ({
+          workout_id: sourceWorkoutIds[idx],
+          event_id: evt.id,
+          name: (evt.name as string) ?? (eventBodies[idx].name as string),
+          start_date_local: (evt.start_date_local as string) ?? (eventBodies[idx].start_date_local as string),
+        }));
+
+        return textResult({
+          mode,
+          scheduled_count: scheduled.length,
+          scheduled,
+        });
+      } catch (error) {
+        return errorResult("scheduling library", error);
       }
     }
   );

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { IntervalsClient } from "../src/client";
-import { registerLibraryTools } from "../src/tools/library";
+import { registerLibraryTools, addDays, resolveWorkoutTime, eventFromWorkout } from "../src/tools/library";
 
 // Uses internal _registeredTools — may break on SDK updates.
 // Acceptable tradeoff vs. full transport setup for unit tests.
@@ -1174,5 +1174,532 @@ describe("delete_library_item", () => {
 
     expect(result.isError).toBe(true);
     expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 6: schedule_library (Helpers and Tool)
+// ---------------------------------------------------------------------------
+
+describe("schedule_library helpers", () => {
+  describe("addDays", () => {
+    it("handles standard additions within month", () => {
+      expect(addDays("2026-08-10", 5)).toBe("2026-08-15");
+      expect(addDays("2026-08-10", 0)).toBe("2026-08-10");
+    });
+
+    it("handles month rollover", () => {
+      expect(addDays("2026-08-31", 1)).toBe("2026-09-01");
+      expect(addDays("2026-08-31", 9)).toBe("2026-09-09");
+      expect(addDays("2026-08-31", 14)).toBe("2026-09-14");
+    });
+
+    it("handles year rollover", () => {
+      expect(addDays("2026-12-31", 1)).toBe("2027-01-01");
+    });
+
+    it("handles leap years correctly", () => {
+      expect(addDays("2024-02-28", 1)).toBe("2024-02-29");
+      expect(addDays("2024-02-28", 2)).toBe("2024-03-01");
+      expect(addDays("2025-02-28", 1)).toBe("2025-03-01");
+    });
+
+    it("throws on invalid date string", () => {
+      expect(() => addDays("not-a-date", 1)).toThrow();
+    });
+  });
+
+  describe("resolveWorkoutTime", () => {
+    it("prefers saved workout time over default time", () => {
+      expect(resolveWorkoutTime("07:30", "18:00:00")).toBe("07:30:00");
+      expect(resolveWorkoutTime("07:30:15", "18:00:00")).toBe("07:30:15");
+    });
+
+    it("falls back to default time when saved time is undefined or null", () => {
+      expect(resolveWorkoutTime(undefined, "18:00:00")).toBe("18:00:00");
+      expect(resolveWorkoutTime(null, "18:30")).toBe("18:30:00");
+    });
+
+    it("falls back to midnight when both are undefined", () => {
+      expect(resolveWorkoutTime(undefined, undefined)).toBe("00:00:00");
+      expect(resolveWorkoutTime(null, null)).toBe("00:00:00");
+    });
+
+    it("throws on invalid saved or default time format", () => {
+      expect(() => resolveWorkoutTime("25:00", undefined)).toThrow();
+      expect(() => resolveWorkoutTime("invalid", undefined)).toThrow();
+      expect(() => resolveWorkoutTime(undefined, "99:00:00")).toThrow();
+      expect(() => resolveWorkoutTime(undefined, "12:65:00")).toThrow();
+    });
+  });
+
+  describe("eventFromWorkout", () => {
+    it("copies allowlisted event fields and ignores raw workout_doc or server fields", () => {
+      const event = eventFromWorkout(
+        {
+          ...workoutRaw,
+          workout_doc: { step: 1 },
+          folder_id: 50,
+          id: 11,
+        },
+        "2026-08-18T19:00:00",
+        { name: "Overridden Name" },
+      );
+
+      expect(event).toEqual({
+        category: "WORKOUT",
+        start_date_local: "2026-08-18T19:00:00",
+        name: "Overridden Name",
+        description: "Main Set\n- 3x\n- 10m 90%",
+        type: "Ride",
+        indoor: false,
+        moving_time: 4200,
+        icu_training_load: 68,
+        icu_intensity: 0.87,
+        targets: ["POWER"],
+        tags: ["build"],
+      });
+      expect(event).not.toHaveProperty("workout_doc");
+      expect(event).not.toHaveProperty("folder_id");
+      expect(event).not.toHaveProperty("id");
+    });
+
+    it("includes plan linkage fields when plan context is provided", () => {
+      const event = eventFromWorkout(
+        { ...workoutPlan, id: 201 },
+        "2026-09-01T00:00:00",
+        {},
+        { athlete_id: "i123", folder_id: 90 },
+      );
+
+      expect(event).toHaveProperty("plan_athlete_id", "i123");
+      expect(event).toHaveProperty("plan_folder_id", 90);
+      expect(event).toHaveProperty("plan_workout_id", 201);
+    });
+  });
+});
+
+describe("schedule_library", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  describe("WORKOUTS mode", () => {
+    it("fetches full workouts and posts bulk events with upsertOnUid=false and updatePlanApplied=false", async () => {
+      let postUrl = "";
+      let postBody: unknown[] = [];
+      let postQuery: Record<string, string> = {};
+
+      const mockFetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+        if (init?.method === "POST") {
+          postUrl = url;
+          const parsed = new URL(url);
+          postQuery = Object.fromEntries(parsed.searchParams.entries());
+          postBody = JSON.parse(String(init.body ?? "[]")) as unknown[];
+          return Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve([
+              { id: 1001, name: "SS-3x10", start_date_local: "2026-08-18T19:00:00" },
+              { id: 1002, name: "Custom Name", start_date_local: "2026-08-20T08:00:00" },
+            ]),
+            text: () => Promise.resolve(""),
+          });
+        }
+        // GET /workouts/{id}
+        if (url.includes("/workouts/11")) {
+          return Promise.resolve({ ok: true, json: () => Promise.resolve({ ...workoutRaw }), text: () => Promise.resolve("") });
+        }
+        if (url.includes("/workouts/201")) {
+          return Promise.resolve({ ok: true, json: () => Promise.resolve({ ...workoutPlan }), text: () => Promise.resolve("") });
+        }
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({}), text: () => Promise.resolve("") });
+      });
+      vi.stubGlobal("fetch", mockFetch);
+
+      const { server } = makeServer("i123");
+      const result = await callTool(server, "schedule_library", {
+        mode: "WORKOUTS",
+        workouts: [
+          { workout_id: 11, start_date_local: "2026-08-18T19:00:00" },
+          { workout_id: 201, start_date_local: "2026-08-20T08:00:00", name: "Custom Name", calendar_id: 5 },
+        ],
+      });
+
+      expect(postUrl).toContain("/athlete/i123/events/bulk");
+      expect(postQuery).toEqual({
+        upsertOnUid: "false",
+        updatePlanApplied: "false",
+      });
+      expect(postBody).toEqual([
+        expect.objectContaining({
+          category: "WORKOUT",
+          start_date_local: "2026-08-18T19:00:00",
+          name: "SS-3x10",
+          description: "Main Set\n- 3x\n- 10m 90%",
+          type: "Ride",
+        }),
+        expect.objectContaining({
+          category: "WORKOUT",
+          start_date_local: "2026-08-20T08:00:00",
+          name: "Custom Name",
+          calendar_id: 5,
+          type: "Ride",
+        }),
+      ]);
+      expect(result.structuredContent).toEqual({
+        mode: "WORKOUTS",
+        scheduled_count: 2,
+        scheduled: [
+          { workout_id: 11, event_id: 1001, name: "SS-3x10", start_date_local: "2026-08-18T19:00:00" },
+          { workout_id: 201, event_id: 1002, name: "Custom Name", start_date_local: "2026-08-20T08:00:00" },
+        ],
+      });
+    });
+
+    it("allows the same workout ID on different timestamps", async () => {
+      vi.stubGlobal("fetch", vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+        if (init?.method === "POST") {
+          return Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve([
+              { id: 1001, name: "SS-3x10", start_date_local: "2026-08-18T19:00:00" },
+              { id: 1002, name: "SS-3x10", start_date_local: "2026-08-25T19:00:00" },
+            ]),
+            text: () => Promise.resolve(""),
+          });
+        }
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ ...workoutRaw }), text: () => Promise.resolve("") });
+      }));
+
+      const { server } = makeServer("i123");
+      const result = await callTool(server, "schedule_library", {
+        mode: "WORKOUTS",
+        workouts: [
+          { workout_id: 11, start_date_local: "2026-08-18T19:00:00" },
+          { workout_id: 11, start_date_local: "2026-08-25T19:00:00" },
+        ],
+      });
+
+      expect(result.isError).toBeFalsy();
+      expect(result.structuredContent.scheduled_count).toBe(2);
+    });
+
+    it("rejects exact duplicate workout_id and timestamp before POST", async () => {
+      const mockFetch = vi.fn();
+      vi.stubGlobal("fetch", mockFetch);
+
+      const { server } = makeServer("i123");
+      const result = await callTool(server, "schedule_library", {
+        mode: "WORKOUTS",
+        workouts: [
+          { workout_id: 11, start_date_local: "2026-08-18T19:00:00" },
+          { workout_id: 11, start_date_local: "2026-08-18T19:00:00" },
+        ],
+      });
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toMatch(/duplicate/i);
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it("rejects invalid timestamps before POST", async () => {
+      const mockFetch = vi.fn();
+      vi.stubGlobal("fetch", mockFetch);
+
+      const { server } = makeServer("i123");
+      const result = await callTool(server, "schedule_library", {
+        mode: "WORKOUTS",
+        workouts: [
+          { workout_id: 11, start_date_local: "2026-08-18T25:00:00" },
+        ],
+      });
+
+      expect(result.isError).toBe(true);
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it("rejects empty workouts array before POST", async () => {
+      const mockFetch = vi.fn();
+      vi.stubGlobal("fetch", mockFetch);
+
+      const { server } = makeServer("i123");
+      const result = await callTool(server, "schedule_library", {
+        mode: "WORKOUTS",
+        workouts: [],
+      });
+
+      expect(result.isError).toBe(true);
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it("rejects more than 100 workouts before POST", async () => {
+      const mockFetch = vi.fn();
+      vi.stubGlobal("fetch", mockFetch);
+
+      const { server } = makeServer("i123");
+      const many = Array.from({ length: 101 }, (_, i) => ({
+        workout_id: 11,
+        start_date_local: `2026-08-${String((i % 28) + 1).padStart(2, "0")}T10:00:00`,
+      }));
+
+      const result = await callTool(server, "schedule_library", {
+        mode: "WORKOUTS",
+        workouts: many,
+      });
+
+      expect(result.isError).toBe(true);
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it("reports unknown bulk failure message when POST throws", async () => {
+      vi.stubGlobal("fetch", vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+        if (init?.method === "POST") {
+          return Promise.resolve({
+            ok: false,
+            status: 500,
+            text: () => Promise.resolve("Internal Server Error"),
+          });
+        }
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ ...workoutRaw }), text: () => Promise.resolve("") });
+      }));
+
+      const { server } = makeServer("i123");
+      const result = await callTool(server, "schedule_library", {
+        mode: "WORKOUTS",
+        workouts: [
+          { workout_id: 11, start_date_local: "2026-08-18T19:00:00" },
+        ],
+      });
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("Bulk scheduling outcome is unknown; verify the calendar before retrying.");
+      expect(JSON.stringify(result)).not.toContain('"created_count":0');
+    });
+  });
+
+  describe("PLAN mode", () => {
+    it("schedules a complete plan across month boundary with linkage fields and updatePlanApplied=true", async () => {
+      let postUrl = "";
+      let postBody: unknown[] = [];
+      let postQuery: Record<string, string> = {};
+
+      const planWorkoutsList = [
+        { id: 201, folder_id: 90, day: 0, time: "06:00:00", athlete_id: "i123" },
+        { id: 202, folder_id: 90, day: 9, time: "07:30", athlete_id: "i123" },
+        { id: 203, folder_id: 90, day: 14, time: null, athlete_id: "i123" },
+      ];
+
+      const fullWorkouts: Record<number, unknown> = {
+        201: { id: 201, name: "Day 0 Ride", type: "Ride", description: "Spin", targets: ["POWER"] },
+        202: { id: 202, name: "Day 9 Intervals", type: "Ride", description: "3x10", targets: ["POWER"] },
+        203: { id: 203, name: "Day 14 Long", type: "Ride", description: "Long ride", targets: ["HR"] },
+      };
+
+      vi.stubGlobal("fetch", vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+        if (init?.method === "POST") {
+          postUrl = url;
+          const parsed = new URL(url);
+          postQuery = Object.fromEntries(parsed.searchParams.entries());
+          postBody = JSON.parse(String(init.body ?? "[]")) as unknown[];
+          return Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve([
+              { id: 301, name: "Day 0 Ride", start_date_local: "2026-08-31T06:00:00" },
+              { id: 302, name: "Day 9 Intervals", start_date_local: "2026-09-09T07:30:00" },
+              { id: 303, name: "Day 14 Long", start_date_local: "2026-09-14T08:00:00" },
+            ]),
+            text: () => Promise.resolve(""),
+          });
+        }
+        if (url.includes("/folders")) {
+          return Promise.resolve({ ok: true, json: () => Promise.resolve([folderPlan]), text: () => Promise.resolve("") });
+        }
+        if (url.endsWith("/workouts")) {
+          return Promise.resolve({ ok: true, json: () => Promise.resolve(planWorkoutsList), text: () => Promise.resolve("") });
+        }
+        for (const [id, data] of Object.entries(fullWorkouts)) {
+          if (url.endsWith(`/workouts/${id}`)) {
+            return Promise.resolve({ ok: true, json: () => Promise.resolve(data), text: () => Promise.resolve("") });
+          }
+        }
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({}), text: () => Promise.resolve("") });
+      }));
+
+      const { server } = makeServer("i123");
+      const result = await callTool(server, "schedule_library", {
+        mode: "PLAN",
+        plan_id: 90,
+        start_date: "2026-08-31",
+        default_start_time: "08:00:00",
+      });
+
+      expect(postUrl).toContain("/athlete/i123/events/bulk");
+      expect(postQuery.updatePlanApplied).toBe("true");
+      expect(postQuery.upsertOnUid).toBe("false");
+      expect(postBody).toHaveLength(3);
+
+      // Event 0: day 0 -> 2026-08-31T06:00:00 (saved time 06:00:00 takes precedence over default 08:00:00)
+      expect(postBody[0]).toEqual(expect.objectContaining({
+        start_date_local: "2026-08-31T06:00:00",
+        plan_athlete_id: "i123",
+        plan_folder_id: 90,
+        plan_workout_id: 201,
+      }));
+
+      // Event 1: day 9 across month boundary -> 2026-09-09T07:30:00
+      expect(postBody[1]).toEqual(expect.objectContaining({
+        start_date_local: "2026-09-09T07:30:00",
+        plan_athlete_id: "i123",
+        plan_folder_id: 90,
+        plan_workout_id: 202,
+      }));
+
+      // Event 2: day 14 -> 2026-09-14T08:00:00 (no saved time; uses default 08:00:00)
+      expect(postBody[2]).toEqual(expect.objectContaining({
+        start_date_local: "2026-09-14T08:00:00",
+        plan_athlete_id: "i123",
+        plan_folder_id: 90,
+        plan_workout_id: 203,
+      }));
+
+      expect(result.structuredContent.scheduled_count).toBe(3);
+    });
+
+    it("rejects a FOLDER passed as a plan before POST", async () => {
+      let postCalled = false;
+      vi.stubGlobal("fetch", vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+        if (init?.method === "POST") postCalled = true;
+        if (url.includes("/folders")) {
+          return Promise.resolve({ ok: true, json: () => Promise.resolve([folderBikeSweet]), text: () => Promise.resolve("") });
+        }
+        return Promise.resolve({ ok: true, json: () => Promise.resolve([]), text: () => Promise.resolve("") });
+      }));
+
+      const { server } = makeServer("i123");
+      const result = await callTool(server, "schedule_library", {
+        mode: "PLAN",
+        plan_id: 50, // FOLDER, not PLAN
+        start_date: "2026-08-31",
+      });
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toMatch(/FOLDER.*PLAN/i);
+      expect(postCalled).toBe(false);
+    });
+
+    it("rejects a plan workout with missing/negative day before POST", async () => {
+      let postCalled = false;
+      vi.stubGlobal("fetch", vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+        if (init?.method === "POST") postCalled = true;
+        if (url.includes("/folders")) {
+          return Promise.resolve({ ok: true, json: () => Promise.resolve([folderPlan]), text: () => Promise.resolve("") });
+        }
+        if (url.endsWith("/workouts")) {
+          return Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve([
+              { id: 201, folder_id: 90, day: -1, athlete_id: "i123" },
+            ]),
+            text: () => Promise.resolve(""),
+          });
+        }
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({}), text: () => Promise.resolve("") });
+      }));
+
+      const { server } = makeServer("i123");
+      const result = await callTool(server, "schedule_library", {
+        mode: "PLAN",
+        plan_id: 90,
+        start_date: "2026-08-31",
+      });
+
+      expect(result.isError).toBe(true);
+      expect(postCalled).toBe(false);
+    });
+
+    it("rejects an empty plan before POST", async () => {
+      let postCalled = false;
+      vi.stubGlobal("fetch", vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+        if (init?.method === "POST") postCalled = true;
+        if (url.includes("/folders")) {
+          return Promise.resolve({ ok: true, json: () => Promise.resolve([folderPlan]), text: () => Promise.resolve("") });
+        }
+        if (url.endsWith("/workouts")) {
+          return Promise.resolve({ ok: true, json: () => Promise.resolve([]), text: () => Promise.resolve("") });
+        }
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({}), text: () => Promise.resolve("") });
+      }));
+
+      const { server } = makeServer("i123");
+      const result = await callTool(server, "schedule_library", {
+        mode: "PLAN",
+        plan_id: 90,
+        start_date: "2026-08-31",
+      });
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toMatch(/no workouts/i);
+      expect(postCalled).toBe(false);
+    });
+
+    it("rejects a plan with > 100 workouts before POST", async () => {
+      let postCalled = false;
+      const manyPlanWorkouts = Array.from({ length: 101 }, (_, i) => ({
+        id: 200 + i,
+        folder_id: 90,
+        day: i,
+        athlete_id: "i123",
+      }));
+
+      vi.stubGlobal("fetch", vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+        if (init?.method === "POST") postCalled = true;
+        if (url.includes("/folders")) {
+          return Promise.resolve({ ok: true, json: () => Promise.resolve([folderPlan]), text: () => Promise.resolve("") });
+        }
+        if (url.endsWith("/workouts")) {
+          return Promise.resolve({ ok: true, json: () => Promise.resolve(manyPlanWorkouts), text: () => Promise.resolve("") });
+        }
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({}), text: () => Promise.resolve("") });
+      }));
+
+      const { server } = makeServer("i123");
+      const result = await callTool(server, "schedule_library", {
+        mode: "PLAN",
+        plan_id: 90,
+        start_date: "2026-08-31",
+      });
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toMatch(/100/i);
+      expect(postCalled).toBe(false);
+    });
+
+    it("rejects invalid saved time in plan workout before POST", async () => {
+      let postCalled = false;
+      vi.stubGlobal("fetch", vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+        if (init?.method === "POST") postCalled = true;
+        if (url.includes("/folders")) {
+          return Promise.resolve({ ok: true, json: () => Promise.resolve([folderPlan]), text: () => Promise.resolve("") });
+        }
+        if (url.endsWith("/workouts")) {
+          return Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve([
+              { id: 201, folder_id: 90, day: 0, time: "invalid-time", athlete_id: "i123" },
+            ]),
+            text: () => Promise.resolve(""),
+          });
+        }
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({}), text: () => Promise.resolve("") });
+      }));
+
+      const { server } = makeServer("i123");
+      const result = await callTool(server, "schedule_library", {
+        mode: "PLAN",
+        plan_id: 90,
+        start_date: "2026-08-31",
+      });
+
+      expect(result.isError).toBe(true);
+      expect(postCalled).toBe(false);
+    });
   });
 });
