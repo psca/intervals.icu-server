@@ -8,22 +8,22 @@ export class IntervalsClient {
     this.athleteId = athleteId;
   }
 
-  async get<T>(path: string, params?: Record<string, string>): Promise<T> {
+  private url(path: string, params?: Record<string, string>): string {
     const url = new URL(IntervalsClient.BASE_URL + path);
-    if (params) {
-      for (const [k, v] of Object.entries(params)) {
-        url.searchParams.set(k, v);
-      }
-    }
-    const res = await fetch(url.toString(), {
+    for (const [key, value] of Object.entries(params ?? {})) url.searchParams.set(key, value);
+    return url.toString();
+  }
+
+  async get<T>(path: string, params?: Record<string, string>): Promise<T> {
+    const res = await fetch(this.url(path, params), {
       headers: { Authorization: this.authHeader, Accept: "application/json" },
     });
     if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
     return res.json() as Promise<T>;
   }
 
-  async post<T>(path: string, body: unknown): Promise<T> {
-    const res = await fetch(IntervalsClient.BASE_URL + path, {
+  async post<T>(path: string, body: unknown, params?: Record<string, string>): Promise<T> {
+    const res = await fetch(this.url(path, params), {
       method: "POST",
       headers: {
         Authorization: this.authHeader,
@@ -37,7 +37,7 @@ export class IntervalsClient {
   }
 
   async put<T>(path: string, body: unknown): Promise<T> {
-    const res = await fetch(IntervalsClient.BASE_URL + path, {
+    const res = await fetch(this.url(path), {
       method: "PUT",
       headers: {
         Authorization: this.authHeader,
@@ -50,11 +50,14 @@ export class IntervalsClient {
     return res.json() as Promise<T>;
   }
 
-  async delete(path: string): Promise<void> {
-    const res = await fetch(IntervalsClient.BASE_URL + path, {
+  async delete<T = void>(path: string, params?: Record<string, string>): Promise<T> {
+    const res = await fetch(this.url(path, params), {
       method: "DELETE",
-      headers: { Authorization: this.authHeader },
+      headers: { Authorization: this.authHeader, Accept: "application/json" },
     });
     if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+    if (res.status === 204) return undefined as T;
+    const text = await res.text();
+    return (text ? JSON.parse(text) : undefined) as T;
   }
 }

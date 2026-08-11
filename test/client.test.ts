@@ -57,6 +57,22 @@ describe("IntervalsClient", () => {
       expect((init.headers as Record<string, string>)["Content-Type"]).toBe("application/json");
       expect(init.body).toBe(JSON.stringify({ name: "Test Ride" }));
     });
+
+    it("appends query params to POST requests", async () => {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(
+        new Response(JSON.stringify([]), { status: 200 })
+      ));
+      const client = new IntervalsClient("key", "i12345");
+
+      await client.post("/athlete/i12345/events/bulk", [], {
+        upsertOnUid: "false",
+        updatePlanApplied: "true",
+      });
+
+      const calledUrl = vi.mocked(fetch).mock.calls[0][0] as string;
+      expect(calledUrl).toContain("upsertOnUid=false");
+      expect(calledUrl).toContain("updatePlanApplied=true");
+    });
   });
 
   describe("DELETE request", () => {
@@ -71,6 +87,16 @@ describe("IntervalsClient", () => {
       const [, init] = vi.mocked(fetch).mock.calls[0] as [string, RequestInit];
       expect(init.method).toBe("DELETE");
       expect(init.body).toBeUndefined();
+    });
+
+    it("returns a JSON body from DELETE when present", async () => {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(
+        new Response(JSON.stringify([41]), { status: 200 })
+      ));
+      const client = new IntervalsClient("key", "i12345");
+
+      await expect(client.delete<number[]>("/athlete/i12345/workouts/41", { others: "false" }))
+        .resolves.toEqual([41]);
     });
   });
 });
