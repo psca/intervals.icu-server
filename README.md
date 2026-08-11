@@ -104,8 +104,8 @@ Use that page to update your intervals.icu athlete ID or API key, or to disconne
 | `get_events` | Planned workouts/events by date range |
 | `get_event_by_id` | Single event details |
 | `add_or_update_event` | Create or modify planned workouts, with optional athlete-local `start_date_local` scheduling (`YYYY-MM-DDTHH:mm:ss`) |
-| `search_workout_library` | Search athlete's private folders, plans, and workouts with compact metadata projection |
-| `get_library_workout` | Retrieve a single library workout by ID without description truncation |
+| `search_workout_library` | Search athlete's private folders, plans, and workouts with compact metadata projection (omits workout descriptions) |
+| `get_library_workout` | Retrieve a single library workout by ID (includes workout description; omits raw `workout_doc` and attachments) |
 | `save_library_container` | Create or update a top-level `FOLDER` or progressive `PLAN` container |
 | `save_library_workout` | Create, update, or copy calendar events into library workouts (`NEW`, `UPDATE`, `EVENT` sources) |
 | `delete_library_item` | Explicitly confirmed deletion (`confirm: true`) of a library workout, folder, or plan (deleting a container cascades to contained workouts) |
@@ -121,9 +121,9 @@ in Intervals.icu. Do not append `Z` or a UTC offset to `start_date_local`.
 
 ### Workout Library semantics
 
-- **Scope:** Operates strictly on the authenticated athlete's private library (`athlete_id === currentAthleteId`). Shared or community folders and workouts are excluded.
+- **Scope:** The tools use the authenticated athlete's private library endpoints. Records with an explicit mismatched `athlete_id` are excluded; records with an omitted `athlete_id` are accepted as owned results from those endpoints. Shared or community library discovery remains out of scope.
 - **Folders vs. Plans:** Containers are either flat `FOLDER` collections (reusable standalone workouts without day offsets) or progressive `PLAN` schedules (multi-day progressions where each workout defines a non-negative integer `day` offset from plan start). Folders reject `day` offsets; plans require integer `day >= 0`.
-- **Compact discovery:** `search_workout_library` projects compact metadata to conserve context (omitting raw `workout_doc`, attachments, and truncating descriptions to 120 characters). `get_library_workout` returns full details for a single workout when authoring or reviewing.
+- **Compact discovery & projections:** `search_workout_library` projects compact metadata to conserve context: compact workout search results omit workout descriptions, `workout_doc`, and attachments (container metadata may include the container description). `get_library_workout` returns the selected workout description but omits raw `workout_doc` and attachments.
 - **Confirmed deletions & cascade warning:** `delete_library_item` requires `confirm: true`. Deleting a `FOLDER` or `PLAN` container permanently deletes all contained workouts in intervals.icu (destructive cascade).
 - **Scheduling:** `schedule_library` supports `WORKOUTS` mode (individual workouts with local timestamps) and `PLAN` mode (expands zero-based day offsets from `start_date` across month/year boundaries, prioritizing saved workout times over default start times). All validation and workout retrieval complete server-side before performing a single bulk POST (max 100 items). Upstream bulk writes are not transactional; if the upstream request fails, the outcome is reported as unknown and the calendar must be inspected before retrying.
 
