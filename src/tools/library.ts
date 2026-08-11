@@ -510,12 +510,32 @@ export function registerLibraryTools(server: McpServer, client: IntervalsClient)
         // ---- UPDATE ----------------------------------------------------------
         if (source === "UPDATE") {
           if (workout_id == null) throw new Error("workout_id is required for UPDATE.");
+          if (container_id != null) throw new Error(
+            "container_id is not supported for UPDATE; moving a workout between containers is not supported by this operation."
+          );
 
           const current = await client.get<RecordValue>(
             `/athlete/${client.athleteId}/workouts/${workout_id}`
           );
-          // Merge: current fields as base, input fields as overrides
-          const payload = workoutWritePayload(current, rv);
+
+          const currentFolderId = current.folder_id as number | undefined;
+          if (currentFolderId == null) throw new Error(`Workout ${workout_id} has no folder_id.`);
+
+          const container = await findContainer(client, currentFolderId);
+          const containerType = container.type as ContainerType;
+
+          // Merge: current fields as base, caller overrides on top
+          const merged = workoutWritePayload(current, rv);
+
+          // Resolve effective day:
+          // - PLAN: prefer supplied day, fall back to stored day
+          // - FOLDER: pass supplied day (applyDestination rejects it if non-nil)
+          const effectiveDay =
+            containerType === "PLAN"
+              ? (day !== undefined ? day : (current.day as number | undefined))
+              : day;
+
+          const payload = applyDestination(merged, containerType, effectiveDay);
 
           const saved = await client.put<RecordValue>(
             `/athlete/${client.athleteId}/workouts/${workout_id}`, payload

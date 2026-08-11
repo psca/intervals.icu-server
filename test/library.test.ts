@@ -675,29 +675,36 @@ describe("save_library_workout", () => {
   // ---- UPDATE ---------------------------------------------------------------
 
   describe("UPDATE", () => {
+    /** Helper: 3-call mock for a FOLDER workout UPDATE.
+     *  Call 1 → GET /workouts/{id}, Call 2 → GET /folders, Call 3 → PUT */
+    function mockFolderUpdate(
+      currentWorkout: Record<string, unknown>,
+      captureBody: (url: string, body: Record<string, unknown>) => void,
+      savedWorkout: Record<string, unknown>,
+    ) {
+      let callCount = 0;
+      return vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+        callCount++;
+        if (callCount === 1) {
+          return Promise.resolve({ ok: true, json: () => Promise.resolve(currentWorkout), text: () => Promise.resolve("") });
+        }
+        if (callCount === 2) {
+          // findContainer → GET /folders
+          return Promise.resolve({ ok: true, json: () => Promise.resolve([folderBikeSweet]), text: () => Promise.resolve("") });
+        }
+        captureBody(url, JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>);
+        return Promise.resolve({ ok: true, json: () => Promise.resolve(savedWorkout), text: () => Promise.resolve("") });
+      });
+    }
+
     it("merges current fields with supplied overrides and omits calculated fields", async () => {
       let putUrl = "";
       let putBody: Record<string, unknown> = {};
-      let callCount = 0;
-      vi.stubGlobal("fetch", vi.fn().mockImplementation((url: string, init?: RequestInit) => {
-        callCount++;
-        if (callCount === 1) {
-          // GET current workout
-          return Promise.resolve({
-            ok: true,
-            json: () => Promise.resolve({ ...workoutRaw }),
-            text: () => Promise.resolve(""),
-          });
-        }
-        // PUT updated workout
-        putUrl = url;
-        putBody = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
-        return Promise.resolve({
-          ok: true,
-          json: () => Promise.resolve({ ...workoutRaw, name: "SS-3x10 revised" }),
-          text: () => Promise.resolve(""),
-        });
-      }));
+      vi.stubGlobal("fetch", mockFolderUpdate(
+        { ...workoutRaw },
+        (url, body) => { putUrl = url; putBody = body; },
+        { ...workoutRaw, name: "SS-3x10 revised" },
+      ));
 
       const { server } = makeServer();
       const result = await callTool(server, "save_library_workout", {
@@ -718,6 +725,7 @@ describe("save_library_workout", () => {
       expect(putBody).not.toHaveProperty("icu_training_load");
       expect(putBody).not.toHaveProperty("source");
       expect(putBody).not.toHaveProperty("workout_id");
+      expect(putBody).not.toHaveProperty("day"); // FOLDER: day stripped
       expect(result.structuredContent.action).toBe("updated");
     });
 
@@ -733,6 +741,90 @@ describe("save_library_workout", () => {
 
       expect(result.isError).toBe(true);
       expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it("rejects container_id and makes no fetch", async () => {
+      const mockFetch = vi.fn();
+      vi.stubGlobal("fetch", mockFetch);
+
+      const { server } = makeServer();
+      const result = await callTool(server, "save_library_workout", {
+        source: "UPDATE",
+        workout_id: 11,
+        container_id: 90, // not supported
+        name: "Move attempt",
+      });
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toMatch(/container_id/i);
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it("UPDATE of a FOLDER workout with supplied day returns isError and makes no PUT", async () => {
+      let callCount = 0;
+      const mockFetch = vi.fn().mockImplementation(() => {
+        callCount++;
+        if (callCount === 1) return Promise.resolve({ ok: true, json: () => Promise.resolve({ ...workoutRaw }), text: () => Promise.resolve("") });
+        // findContainer
+        return Promise.resolve({ ok: true, json: () => Promise.resolve([folderBikeSweet]), text: () => Promise.resolve("") });
+      });
+      vi.stubGlobal("fetch", mockFetch);
+
+      const { server } = makeServer();
+      const result = await callTool(server, "save_library_workout", {
+        source: "UPDATE",
+        workout_id: 11,
+        day: 0, // invalid for FOLDER
+      });
+
+      expect(result.isError).toBe(true);
+      expect(callCount).toBe(2); // GET workout + findContainer; no PUT
+    });
+
+    it("UPDATE of a PLAN workout without supplied day preserves the existing day", async () => {
+      // workoutPlan has folder_id:90 (PLAN) and day:0
+      let putBody: Record<string, unknown> = {};
+      let callCount = 0;
+      vi.stubGlobal("fetch", vi.fn().mockImplementation((_url: string, init?: RequestInit) => {
+        callCount++;
+        if (callCount === 1) return Promise.resolve({ ok: true, json: () => Promise.resolve({ ...workoutPlan }), text: () => Promise.resolve("") });
+        if (callCount === 2) return Promise.resolve({ ok: true, json: () => Promise.resolve([folderPlan]), text: () => Promise.resolve("") });
+        putBody = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ ...workoutPlan, name: "Base Ride 1 edited" }), text: () => Promise.resolve("") });
+      }));
+
+      const { server } = makeServer();
+      const result = await callTool(server, "save_library_workout", {
+        source: "UPDATE",
+        workout_id: 201,
+        name: "Base Ride 1 edited",
+        // day not supplied — must preserve current day (0)
+      });
+
+      expect(result.structuredContent.action).toBe("updated");
+      expect(putBody).toHaveProperty("day", 0);
+      expect(putBody).toHaveProperty("name", "Base Ride 1 edited");
+    });
+
+    it("UPDATE of a PLAN workout with supplied day changes the day", async () => {
+      let putBody: Record<string, unknown> = {};
+      let callCount = 0;
+      vi.stubGlobal("fetch", vi.fn().mockImplementation((_url: string, init?: RequestInit) => {
+        callCount++;
+        if (callCount === 1) return Promise.resolve({ ok: true, json: () => Promise.resolve({ ...workoutPlan }), text: () => Promise.resolve("") });
+        if (callCount === 2) return Promise.resolve({ ok: true, json: () => Promise.resolve([folderPlan]), text: () => Promise.resolve("") });
+        putBody = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ ...workoutPlan, day: 7 }), text: () => Promise.resolve("") });
+      }));
+
+      const { server } = makeServer();
+      await callTool(server, "save_library_workout", {
+        source: "UPDATE",
+        workout_id: 201,
+        day: 7,
+      });
+
+      expect(putBody).toHaveProperty("day", 7);
     });
   });
 
