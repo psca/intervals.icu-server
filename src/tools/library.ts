@@ -101,6 +101,62 @@ function fullWorkout(raw: RecordValue): RecordValue {
 }
 
 // ---------------------------------------------------------------------------
+// Shared write helpers
+// ---------------------------------------------------------------------------
+
+/** Remove keys whose value is undefined so payload stays minimal. */
+function stripUndefined(obj: RecordValue): RecordValue {
+  return Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== undefined));
+}
+
+/** Build the editable container payload from tool inputs. */
+function containerPayload(input: RecordValue): RecordValue {
+  return stripUndefined({
+    type: input.type,
+    name: input.name,
+    description: input.description,
+    visibility: input.visibility,
+    start_date_local: input.start_date_local,
+    rollout_weeks: input.rollout_weeks,
+    auto_rollout_day: input.auto_rollout_day,
+    read_only_workouts: input.read_only_workouts,
+    starting_ctl: input.starting_ctl,
+    starting_atl: input.starting_atl,
+  });
+}
+
+/** Compact projection for a saved container — no server-owned or sharing metadata. */
+function compactContainer(raw: RecordValue): RecordValue {
+  return stripUndefined({
+    item_type: raw.type,
+    id: raw.id,
+    name: raw.name,
+    description: (raw.description as string | undefined) ?? null,
+    workout_count: (raw.num_workouts as number | undefined) ?? null,
+  });
+}
+
+/** Fields that are only valid on a PLAN container. */
+const PLAN_ONLY_FIELDS: (keyof RecordValue)[] = [
+  "rollout_weeks",
+  "auto_rollout_day",
+  "read_only_workouts",
+  "starting_ctl",
+  "starting_atl",
+];
+
+/**
+ * Fetch the athlete's folder list and resolve a single container by ID.
+ * Throws if not found.
+ */
+async function findContainer(client: IntervalsClient, containerId: number): Promise<RecordValue> {
+  const folders = await client.get<RecordValue[]>(`/athlete/${client.athleteId}/folders`);
+  const found = (folders ?? []).find((f) => f.id === containerId);
+  if (!found) throw new Error(`Container ${containerId} not found.`);
+  return found;
+}
+
+// ---------------------------------------------------------------------------
 // Tool registration
 // ---------------------------------------------------------------------------
 
@@ -207,6 +263,101 @@ export function registerLibraryTools(server: McpServer, client: IntervalsClient)
         return textResult({ workout: fullWorkout(raw) });
       } catch (error) {
         return errorResult("retrieving library workout", error);
+      }
+    }
+  );
+
+  // ---- save_library_container ------------------------------------------------
+  server.registerTool(
+    "save_library_container",
+    {
+      description:
+        "Create or update a library folder or plan. " +
+        "Use action=CREATE to create a new container or action=UPDATE to modify an existing one. " +
+        "Folders hold stable reusable workouts; plans hold workouts with zero-based day offsets for progressive blocks. " +
+        "Plan-only fields (rollout_weeks, auto_rollout_day, read_only_workouts, starting_ctl, starting_atl) " +
+        "are rejected for FOLDER containers.",
+      inputSchema: {
+        action: z.enum(["CREATE", "UPDATE"]).describe("CREATE to create a new container, UPDATE to modify an existing one"),
+        container_id: z.number().int().optional().describe("Required for UPDATE: the container ID to modify"),
+        type: z.enum(["FOLDER", "PLAN"]).optional().describe("Container type — required for CREATE; must match stored type for UPDATE"),
+        name: z.string().optional().describe("Container name"),
+        description: z.string().optional().describe("Container description"),
+        visibility: z.string().optional().describe("Visibility setting"),
+        start_date_local: z.string().optional().describe("Plan start date YYYY-MM-DD"),
+        rollout_weeks: z.number().int().optional().describe("PLAN only: number of weeks to roll out"),
+        auto_rollout_day: z.number().int().optional().describe("PLAN only: day of week for automatic rollout"),
+        read_only_workouts: z.boolean().optional().describe("PLAN only: prevent athlete edits on plan workouts"),
+        starting_ctl: z.number().optional().describe("PLAN only: athlete starting CTL for plan fitness estimates"),
+        starting_atl: z.number().optional().describe("PLAN only: athlete starting ATL for plan fitness estimates"),
+      },
+      outputSchema: {
+        action: z.enum(["created", "updated"]),
+        container: z.record(z.string(), z.unknown()),
+      },
+    },
+    async (input) => {
+      try {
+        const { action, container_id, type } = input as RecordValue & { action: "CREATE" | "UPDATE"; container_id?: number; type?: ContainerType };
+
+        // Validate plan-only fields are not supplied for FOLDER
+        if (type === "FOLDER") {
+          const planOnlySupplied = PLAN_ONLY_FIELDS.filter((f) => (input as RecordValue)[f] !== undefined);
+          if (planOnlySupplied.length > 0) {
+            throw new Error(
+              `Fields ${planOnlySupplied.join(", ")} are only valid for PLAN containers, not FOLDER.`
+            );
+          }
+        }
+
+        if (action === "CREATE") {
+          const payload = containerPayload(input as RecordValue);
+          const saved = await client.post<RecordValue>(
+            `/athlete/${client.athleteId}/folders`,
+            payload
+          );
+          return textResult({ action: "created", container: compactContainer(saved) });
+        }
+
+        // UPDATE
+        if (container_id == null) {
+          throw new Error("container_id is required for UPDATE.");
+        }
+
+        // Resolve the current container
+        const current = await findContainer(client, container_id);
+        const storedType = current.type as ContainerType;
+
+        // Validate type match if the caller supplied one
+        if (type && type !== storedType) {
+          throw new Error(
+            `Type mismatch: container ${container_id} is a ${storedType}, not ${type}.`
+          );
+        }
+
+        // Validate plan-only fields against the *stored* type when type was omitted
+        if (storedType === "FOLDER") {
+          const planOnlySupplied = PLAN_ONLY_FIELDS.filter((f) => (input as RecordValue)[f] !== undefined);
+          if (planOnlySupplied.length > 0) {
+            throw new Error(
+              `Fields ${planOnlySupplied.join(", ")} are only valid for PLAN containers, not FOLDER.`
+            );
+          }
+        }
+
+        // Build payload from supplied inputs; always include stored type
+        const payload = stripUndefined({
+          ...containerPayload(input as RecordValue),
+          type: storedType,  // preserve stored type upstream always expects it on PUT
+        });
+
+        const saved = await client.put<RecordValue>(
+          `/athlete/${client.athleteId}/folders/${container_id}`,
+          payload
+        );
+        return textResult({ action: "updated", container: compactContainer(saved) });
+      } catch (error) {
+        return errorResult("saving library container", error);
       }
     }
   );

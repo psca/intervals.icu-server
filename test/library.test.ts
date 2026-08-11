@@ -323,3 +323,194 @@ describe("get_library_workout", () => {
     expect(calledUrl).toContain("/athlete/i123/workouts/11");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Task 3: save_library_container
+// ---------------------------------------------------------------------------
+
+describe("save_library_container", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  // ---- CREATE ----------------------------------------------------------------
+
+  it("CREATE sends only supplied fields to /folders and returns compact container", async () => {
+    let requestBody: Record<string, unknown> = {};
+    let calledUrl = "";
+    vi.stubGlobal("fetch", vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      calledUrl = url;
+      requestBody = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({
+          id: 91,
+          name: "BMP — Base Phase",
+          type: "PLAN",
+          description: "Eight-week aerobic base block",
+          rollout_weeks: 2,
+          athlete_id: "i123",
+        }),
+        text: () => Promise.resolve(""),
+      });
+    }));
+
+    const { server } = makeServer();
+    const result = await callTool(server, "save_library_container", {
+      action: "CREATE",
+      type: "PLAN",
+      name: "BMP — Base Phase",
+      description: "Eight-week aerobic base block",
+      rollout_weeks: 2,
+    });
+
+    expect(calledUrl).toContain("/athlete/i123/folders");
+    expect(requestBody).toEqual({
+      type: "PLAN",
+      name: "BMP — Base Phase",
+      description: "Eight-week aerobic base block",
+      rollout_weeks: 2,
+    });
+    expect(result.structuredContent.action).toBe("created");
+    expect(result.structuredContent.container).toEqual(expect.objectContaining({
+      id: 91,
+      name: "BMP — Base Phase",
+      item_type: "PLAN",
+    }));
+  });
+
+  it("CREATE omits undefined optional fields from the POST body", async () => {
+    let requestBody: Record<string, unknown> = {};
+    vi.stubGlobal("fetch", vi.fn().mockImplementation((_url: string, init?: RequestInit) => {
+      requestBody = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ id: 51, name: "Bike — Z2", type: "FOLDER", athlete_id: "i123" }),
+        text: () => Promise.resolve(""),
+      });
+    }));
+
+    const { server } = makeServer();
+    await callTool(server, "save_library_container", {
+      action: "CREATE",
+      type: "FOLDER",
+      name: "Bike — Z2",
+    });
+
+    // Only supplied fields; no undefined keys
+    expect(requestBody).toEqual({ type: "FOLDER", name: "Bike — Z2" });
+    expect(Object.keys(requestBody)).not.toContain("description");
+    expect(Object.keys(requestBody)).not.toContain("rollout_weeks");
+  });
+
+  it("CREATE FOLDER rejects plan-only fields (rollout_weeks)", async () => {
+    const { server } = makeServer();
+    const result = await callTool(server, "save_library_container", {
+      action: "CREATE",
+      type: "FOLDER",
+      name: "Bike — Z2",
+      rollout_weeks: 4,
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toMatch(/rollout|plan/i);
+  });
+
+  // ---- UPDATE ----------------------------------------------------------------
+
+  it("UPDATE sends only editable fields to /folders/{id}", async () => {
+    let putUrl = "";
+    let putBody: Record<string, unknown> = {};
+    let callCount = 0;
+
+    vi.stubGlobal("fetch", vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      callCount++;
+      // First call: GET /folders to resolve the container
+      if (callCount === 1) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve([
+            { id: 50, name: "Bike — Sweet Spot", type: "FOLDER", description: "Old desc", athlete_id: "i123" },
+          ]),
+          text: () => Promise.resolve(""),
+        });
+      }
+      // Second call: PUT /folders/50
+      putUrl = url;
+      putBody = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({
+          id: 50,
+          name: "Bike — Sweet Spot renamed",
+          type: "FOLDER",
+          description: "Old desc",
+          athlete_id: "i123",
+        }),
+        text: () => Promise.resolve(""),
+      });
+    }));
+
+    const { server } = makeServer();
+    const result = await callTool(server, "save_library_container", {
+      action: "UPDATE",
+      container_id: 50,
+      name: "Bike — Sweet Spot renamed",
+    });
+
+    expect(putUrl).toContain("/folders/50");
+    // Must send name and preserved type; must not include server-owned fields
+    expect(putBody).toHaveProperty("name", "Bike — Sweet Spot renamed");
+    expect(putBody).not.toHaveProperty("children");
+    expect(putBody).not.toHaveProperty("num_workouts");
+    expect(result.structuredContent.action).toBe("updated");
+    expect(result.structuredContent.container.id).toBe(50);
+  });
+
+  it("UPDATE requires container_id", async () => {
+    const { server } = makeServer();
+    const result = await callTool(server, "save_library_container", {
+      action: "UPDATE",
+      type: "FOLDER",
+      name: "No ID",
+    });
+
+    expect(result.isError).toBe(true);
+  });
+
+  it("UPDATE rejects a supplied type that mismatches the stored type", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve([
+        { id: 50, name: "Bike — Sweet Spot", type: "FOLDER", athlete_id: "i123" },
+      ]),
+      text: () => Promise.resolve(""),
+    }));
+
+    const { server } = makeServer();
+    const result = await callTool(server, "save_library_container", {
+      action: "UPDATE",
+      container_id: 50,
+      type: "PLAN",   // mismatches stored FOLDER
+      name: "Renamed",
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toMatch(/type|mismatch|FOLDER|PLAN/i);
+  });
+
+  it("UPDATE not found returns error without making a PUT", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve([]),   // empty folder list
+      text: () => Promise.resolve(""),
+    }));
+
+    const { server } = makeServer();
+    const result = await callTool(server, "save_library_container", {
+      action: "UPDATE",
+      container_id: 999,
+      name: "Ghost",
+    });
+
+    expect(result.isError).toBe(true);
+  });
+});
