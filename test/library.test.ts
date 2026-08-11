@@ -529,3 +529,337 @@ describe("save_library_container", () => {
     expect(mockFetch).not.toHaveBeenCalled();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Task 4: save_library_workout
+// ---------------------------------------------------------------------------
+
+describe("save_library_workout", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  // ---- NEW ------------------------------------------------------------------
+
+  describe("NEW", () => {
+    it("creates a folder workout and posts only WORKOUT_WRITE_FIELDS", async () => {
+      let postUrl = "";
+      let postBody: Record<string, unknown> = {};
+      let callCount = 0;
+      vi.stubGlobal("fetch", vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+        callCount++;
+        if (callCount === 1) {
+          // findContainer → GET /folders
+          return Promise.resolve({ ok: true, json: () => Promise.resolve([folderBikeSweet]), text: () => Promise.resolve("") });
+        }
+        postUrl = url;
+        postBody = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ id: 12, name: "SS-3x10", folder_id: 50, type: "Ride", icu_training_load: 68 }),
+          text: () => Promise.resolve(""),
+        });
+      }));
+
+      const { server } = makeServer();
+      const result = await callTool(server, "save_library_workout", {
+        source: "NEW",
+        container_id: 50,
+        name: "SS-3x10",
+        type: "Ride",
+        description: "Warmup\n- 10m Z2",
+        targets: ["POWER"],
+      });
+
+      expect(postUrl).toContain("/athlete/i123/workouts");
+      expect(postBody).toEqual(expect.objectContaining({
+        folder_id: 50,
+        name: "SS-3x10",
+        type: "Ride",
+        description: "Warmup\n- 10m Z2",
+        targets: ["POWER"],
+      }));
+      expect(postBody).not.toHaveProperty("workout_doc");
+      expect(postBody).not.toHaveProperty("icu_training_load");
+      expect(postBody).not.toHaveProperty("source");
+      expect(postBody).not.toHaveProperty("container_id");
+      expect(result.structuredContent.action).toBe("created");
+    });
+
+    it("creates a plan workout with a required day", async () => {
+      let postBody: Record<string, unknown> = {};
+      let callCount = 0;
+      vi.stubGlobal("fetch", vi.fn().mockImplementation((_url: string, init?: RequestInit) => {
+        callCount++;
+        if (callCount === 1) {
+          return Promise.resolve({ ok: true, json: () => Promise.resolve([folderPlan]), text: () => Promise.resolve("") });
+        }
+        postBody = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ id: 202, name: "Base Ride", folder_id: 90, type: "Ride", day: 7 }),
+          text: () => Promise.resolve(""),
+        });
+      }));
+
+      const { server } = makeServer();
+      await callTool(server, "save_library_workout", {
+        source: "NEW",
+        container_id: 90,
+        name: "Base Ride",
+        type: "Ride",
+        description: "Easy aerobic",
+        day: 7,
+      });
+
+      expect(postBody).toHaveProperty("day", 7);
+      expect(postBody).toHaveProperty("folder_id", 90);
+    });
+
+    it("rejects PLAN destination without day; only findContainer is called", async () => {
+      let callCount = 0;
+      vi.stubGlobal("fetch", vi.fn().mockImplementation(() => {
+        callCount++;
+        return Promise.resolve({ ok: true, json: () => Promise.resolve([folderPlan]), text: () => Promise.resolve("") });
+      }));
+
+      const { server } = makeServer();
+      const result = await callTool(server, "save_library_workout", {
+        source: "NEW",
+        container_id: 90,
+        name: "Base Ride",
+        type: "Ride",
+        description: "Easy aerobic",
+        // day omitted
+      });
+
+      expect(result.isError).toBe(true);
+      expect(callCount).toBe(1); // findContainer only; no POST
+    });
+
+    it("rejects FOLDER destination with supplied day; only findContainer is called", async () => {
+      let callCount = 0;
+      vi.stubGlobal("fetch", vi.fn().mockImplementation(() => {
+        callCount++;
+        return Promise.resolve({ ok: true, json: () => Promise.resolve([folderBikeSweet]), text: () => Promise.resolve("") });
+      }));
+
+      const { server } = makeServer();
+      const result = await callTool(server, "save_library_workout", {
+        source: "NEW",
+        container_id: 50,
+        name: "SS-3x10",
+        type: "Ride",
+        description: "Warmup\n- 10m Z2",
+        day: 0, // invalid for FOLDER
+      });
+
+      expect(result.isError).toBe(true);
+      expect(callCount).toBe(1); // findContainer only; no POST
+    });
+
+    it("requires name, type, and description; makes no fetch when missing", async () => {
+      const mockFetch = vi.fn();
+      vi.stubGlobal("fetch", mockFetch);
+
+      const { server } = makeServer();
+      const result = await callTool(server, "save_library_workout", {
+        source: "NEW",
+        container_id: 50,
+        // name, type, description all omitted
+      });
+
+      expect(result.isError).toBe(true);
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+  });
+
+  // ---- UPDATE ---------------------------------------------------------------
+
+  describe("UPDATE", () => {
+    it("merges current fields with supplied overrides and omits calculated fields", async () => {
+      let putUrl = "";
+      let putBody: Record<string, unknown> = {};
+      let callCount = 0;
+      vi.stubGlobal("fetch", vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+        callCount++;
+        if (callCount === 1) {
+          // GET current workout
+          return Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve({ ...workoutRaw }),
+            text: () => Promise.resolve(""),
+          });
+        }
+        // PUT updated workout
+        putUrl = url;
+        putBody = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ ...workoutRaw, name: "SS-3x10 revised" }),
+          text: () => Promise.resolve(""),
+        });
+      }));
+
+      const { server } = makeServer();
+      const result = await callTool(server, "save_library_workout", {
+        source: "UPDATE",
+        workout_id: 11,
+        name: "SS-3x10 revised",
+      });
+
+      expect(putUrl).toContain("/athlete/i123/workouts/11");
+      expect(putBody).toEqual(expect.objectContaining({
+        folder_id: 50,
+        name: "SS-3x10 revised",
+        description: "Main Set\n- 3x\n- 10m 90%",
+        type: "Ride",
+        targets: ["POWER"],
+      }));
+      expect(putBody).not.toHaveProperty("workout_doc");
+      expect(putBody).not.toHaveProperty("icu_training_load");
+      expect(putBody).not.toHaveProperty("source");
+      expect(putBody).not.toHaveProperty("workout_id");
+      expect(result.structuredContent.action).toBe("updated");
+    });
+
+    it("requires workout_id and makes no fetch when missing", async () => {
+      const mockFetch = vi.fn();
+      vi.stubGlobal("fetch", mockFetch);
+
+      const { server } = makeServer();
+      const result = await callTool(server, "save_library_workout", {
+        source: "UPDATE",
+        name: "No ID",
+      });
+
+      expect(result.isError).toBe(true);
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+  });
+
+  // ---- EVENT ----------------------------------------------------------------
+
+  describe("EVENT", () => {
+    it("copies WORKOUT event fields to a library folder", async () => {
+      const calendarEvent = {
+        id: 77,
+        name: "Threshold Ride",
+        category: "WORKOUT",
+        type: "Ride",
+        description: "3x20m at threshold",
+        targets: ["POWER"],
+        tags: ["build"],
+        indoor: false,
+        start_date_local: "2026-08-18T19:00:00",  // should NOT appear in POST
+        icu_training_load: 95,                      // should NOT appear in POST
+      };
+
+      let postBody: Record<string, unknown> = {};
+      let callCount = 0;
+      vi.stubGlobal("fetch", vi.fn().mockImplementation((_url: string, init?: RequestInit) => {
+        callCount++;
+        if (callCount === 1) return Promise.resolve({ ok: true, json: () => Promise.resolve(calendarEvent), text: () => Promise.resolve("") });
+        if (callCount === 2) return Promise.resolve({ ok: true, json: () => Promise.resolve([folderBikeSweet]), text: () => Promise.resolve("") });
+        postBody = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ id: 13, name: "Threshold Ride", folder_id: 50, type: "Ride" }),
+          text: () => Promise.resolve(""),
+        });
+      }));
+
+      const { server } = makeServer();
+      const result = await callTool(server, "save_library_workout", {
+        source: "EVENT",
+        event_id: 77,
+        container_id: 50,
+      });
+
+      expect(postBody).toEqual(expect.objectContaining({
+        folder_id: 50,
+        name: "Threshold Ride",
+        type: "Ride",
+        description: "3x20m at threshold",
+        targets: ["POWER"],
+      }));
+      expect(postBody).not.toHaveProperty("category");
+      expect(postBody).not.toHaveProperty("start_date_local");
+      expect(postBody).not.toHaveProperty("workout_doc");
+      expect(result.structuredContent.action).toBe("created");
+    });
+
+    it("rejects non-WORKOUT calendar events and makes no POST", async () => {
+      const mockFetch = vi.fn().mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ id: 77, category: "NOTE", name: "Rest day note" }),
+        text: () => Promise.resolve(""),
+      });
+      vi.stubGlobal("fetch", mockFetch);
+
+      const { server } = makeServer();
+      const result = await callTool(server, "save_library_workout", {
+        source: "EVENT",
+        event_id: 77,
+        container_id: 50,
+      });
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toMatch(/category|WORKOUT|NOTE/i);
+      expect(mockFetch).toHaveBeenCalledTimes(1); // only GET event; no findContainer, no POST
+    });
+
+    it("honors optional name and day overrides when copying to a PLAN", async () => {
+      const calendarEvent = {
+        id: 78,
+        name: "Long Run",
+        category: "WORKOUT",
+        type: "Run",
+        description: "2h easy",
+        targets: ["HR"],
+      };
+
+      let postBody: Record<string, unknown> = {};
+      let callCount = 0;
+      vi.stubGlobal("fetch", vi.fn().mockImplementation((_url: string, init?: RequestInit) => {
+        callCount++;
+        if (callCount === 1) return Promise.resolve({ ok: true, json: () => Promise.resolve(calendarEvent), text: () => Promise.resolve("") });
+        if (callCount === 2) return Promise.resolve({ ok: true, json: () => Promise.resolve([folderPlan]), text: () => Promise.resolve("") });
+        postBody = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ id: 203, folder_id: 90, name: "Week 2 Long Run", type: "Run", day: 14 }),
+          text: () => Promise.resolve(""),
+        });
+      }));
+
+      const { server } = makeServer();
+      await callTool(server, "save_library_workout", {
+        source: "EVENT",
+        event_id: 78,
+        container_id: 90,
+        name: "Week 2 Long Run",  // override
+        day: 14,
+      });
+
+      expect(postBody).toEqual(expect.objectContaining({
+        folder_id: 90,
+        name: "Week 2 Long Run",
+        type: "Run",
+        day: 14,
+      }));
+    });
+
+    it("requires event_id and container_id; makes no fetch when missing", async () => {
+      const mockFetch = vi.fn();
+      vi.stubGlobal("fetch", mockFetch);
+
+      const { server } = makeServer();
+      const result = await callTool(server, "save_library_workout", {
+        source: "EVENT",
+        // event_id and container_id both omitted
+      });
+
+      expect(result.isError).toBe(true);
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+  });
+});

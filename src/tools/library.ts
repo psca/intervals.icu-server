@@ -156,6 +156,68 @@ async function findContainer(client: IntervalsClient, containerId: number): Prom
   return found;
 }
 
+/** Allowlisted fields accepted on any workout write. */
+const WORKOUT_WRITE_FIELDS = [
+  "folder_id", "name", "description", "type", "indoor", "color", "day",
+  "hide_from_athlete", "target", "targets", "carbs_per_hour", "tags", "time",
+  "sub_type", "for_week", "distance",
+] as const;
+
+/**
+ * Build a workout write payload from a source record plus optional caller overrides.
+ * Only fields in WORKOUT_WRITE_FIELDS are included — workout_doc and calculated
+ * fields (icu_training_load, icu_intensity, etc.) are structurally excluded.
+ */
+function workoutWritePayload(source: RecordValue, overrides: RecordValue = {}): RecordValue {
+  const result: RecordValue = {};
+  for (const field of WORKOUT_WRITE_FIELDS) {
+    const value = overrides[field] !== undefined ? overrides[field] : source[field];
+    if (value !== undefined) result[field] = value;
+  }
+  return result;
+}
+
+/**
+ * Apply destination-type rules to the payload:
+ * - PLAN requires a non-negative integer day.
+ * - FOLDER rejects a supplied day and strips any day that crept in from source.
+ */
+function applyDestination(
+  payload: RecordValue,
+  containerType: ContainerType,
+  suppliedDay: number | undefined,
+): RecordValue {
+  if (containerType === "PLAN") {
+    if (suppliedDay === undefined || !Number.isInteger(suppliedDay) || suppliedDay < 0) {
+      throw new Error("day (non-negative integer) is required for a PLAN destination.");
+    }
+    return { ...payload, day: suppliedDay };
+  }
+  // FOLDER: reject supplied day, strip from payload
+  if (suppliedDay !== undefined) {
+    throw new Error("day is not valid for a FOLDER destination.");
+  }
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { day: _day, ...rest } = payload;
+  return rest;
+}
+
+/** Compact saved-workout response — omits calculated and server-owned fields. */
+function compactSavedWorkout(raw: RecordValue): RecordValue {
+  return stripUndefined({
+    id: raw.id,
+    folder_id: raw.folder_id,
+    name: raw.name,
+    type: raw.type,
+    day: raw.day,
+    moving_time: raw.moving_time,
+    icu_training_load: raw.icu_training_load,
+    icu_intensity: raw.icu_intensity,
+    targets: raw.targets,
+    tags: raw.tags,
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Tool registration
 // ---------------------------------------------------------------------------
@@ -362,6 +424,135 @@ export function registerLibraryTools(server: McpServer, client: IntervalsClient)
         return textResult({ action: "updated", container: compactContainer(saved) });
       } catch (error) {
         return errorResult("saving library container", error);
+      }
+    }
+  );
+
+  // ---- save_library_workout --------------------------------------------------
+  server.registerTool(
+    "save_library_workout",
+    {
+      description:
+        "Create or update a library workout using one of three sources:\n" +
+        "- NEW: create from supplied fields (requires container_id, name, type, description).\n" +
+        "- UPDATE: modify an existing library workout (requires workout_id); omitted fields " +
+        "are preserved from the current workout.\n" +
+        "- EVENT: copy a calendar event into the library (requires event_id and container_id; " +
+        "event category must be WORKOUT).\n" +
+        "PLAN destinations require a non-negative integer day. " +
+        "FOLDER destinations reject a supplied day. " +
+        "workout_doc is never accepted; use description for workout steps.",
+      inputSchema: {
+        source: z.enum(["NEW", "UPDATE", "EVENT"]).describe(
+          "NEW to create from scratch, UPDATE to modify an existing workout, EVENT to copy from a calendar event"
+        ),
+        container_id: z.number().int().optional().describe(
+          "Destination folder or plan ID — required for NEW and EVENT"
+        ),
+        workout_id: z.number().int().optional().describe("Required for UPDATE: the library workout ID to modify"),
+        event_id: z.number().int().optional().describe("Required for EVENT: the calendar event ID to copy"),
+        name: z.string().optional().describe("Workout name"),
+        description: z.string().optional().describe(
+          "Workout steps in intervals.icu text syntax — required for NEW; optional override for UPDATE and EVENT"
+        ),
+        type: z.string().optional().describe("Sport type, e.g. Ride, Run, Swim — required for NEW"),
+        indoor: z.boolean().optional().describe("Whether the session is indoors"),
+        color: z.string().optional().describe("Calendar colour"),
+        day: z.number().int().min(0).optional().describe(
+          "Zero-based day offset within the plan — required when destination is a PLAN, rejected for FOLDER"
+        ),
+        hide_from_athlete: z.boolean().optional().describe("Hide workout from athlete"),
+        target: z.string().optional().describe("Primary target metric"),
+        targets: z.array(z.string()).optional().describe("Target metrics"),
+        carbs_per_hour: z.number().optional().describe("Planned carbohydrate intake in g/h"),
+        tags: z.array(z.string()).optional().describe("Tags"),
+        time: z.string().optional().describe("Saved start time HH:mm or HH:mm:ss"),
+        sub_type: z.string().optional().describe("Workout subtype"),
+        for_week: z.boolean().optional().describe("Apply to whole training week"),
+        distance: z.number().optional().describe("Expected distance in metres"),
+      },
+      outputSchema: {
+        action: z.enum(["created", "updated"]),
+        workout: z.record(z.string(), z.unknown()),
+      },
+    },
+    async (input) => {
+      try {
+        const rv = input as RecordValue;
+        const source = rv.source as "NEW" | "UPDATE" | "EVENT";
+        const container_id = rv.container_id as number | undefined;
+        const workout_id = rv.workout_id as number | undefined;
+        const event_id = rv.event_id as number | undefined;
+        const day = rv.day as number | undefined;
+        const name = rv.name as string | undefined;
+        const type = rv.type as string | undefined;
+        const description = rv.description as string | undefined;
+
+        // ---- NEW -------------------------------------------------------------
+        if (source === "NEW") {
+          if (container_id == null) throw new Error("container_id is required for NEW.");
+          if (!name) throw new Error("name is required for NEW.");
+          if (!type) throw new Error("type is required for NEW.");
+          if (!description) throw new Error("description is required for NEW.");
+
+          const container = await findContainer(client, container_id);
+          const containerType = container.type as ContainerType;
+
+          const base = workoutWritePayload({ ...rv, folder_id: container_id });
+          const payload = applyDestination(base, containerType, day);
+
+          const saved = await client.post<RecordValue>(
+            `/athlete/${client.athleteId}/workouts`, payload
+          );
+          return textResult({ action: "created", workout: compactSavedWorkout(saved) });
+        }
+
+        // ---- UPDATE ----------------------------------------------------------
+        if (source === "UPDATE") {
+          if (workout_id == null) throw new Error("workout_id is required for UPDATE.");
+
+          const current = await client.get<RecordValue>(
+            `/athlete/${client.athleteId}/workouts/${workout_id}`
+          );
+          // Merge: current fields as base, input fields as overrides
+          const payload = workoutWritePayload(current, rv);
+
+          const saved = await client.put<RecordValue>(
+            `/athlete/${client.athleteId}/workouts/${workout_id}`, payload
+          );
+          return textResult({ action: "updated", workout: compactSavedWorkout(saved) });
+        }
+
+        // ---- EVENT -----------------------------------------------------------
+        if (source === "EVENT") {
+          if (event_id == null) throw new Error("event_id is required for EVENT.");
+          if (container_id == null) throw new Error("container_id is required for EVENT.");
+
+          const event = await client.get<RecordValue>(
+            `/athlete/${client.athleteId}/events/${event_id}`
+          );
+          if (event.category !== "WORKOUT") {
+            throw new Error(
+              `Event ${event_id} has category "${String(event.category)}", not "WORKOUT". Only WORKOUT events can be copied to the library.`
+            );
+          }
+
+          const container = await findContainer(client, container_id);
+          const containerType = container.type as ContainerType;
+
+          // Event fields are the source; caller overrides (name, day, etc.) take precedence
+          const base = workoutWritePayload({ ...event, folder_id: container_id }, rv);
+          const payload = applyDestination(base, containerType, day);
+
+          const saved = await client.post<RecordValue>(
+            `/athlete/${client.athleteId}/workouts`, payload
+          );
+          return textResult({ action: "created", workout: compactSavedWorkout(saved) });
+        }
+
+        throw new Error(`Unknown source: ${String(source)}`);
+      } catch (error) {
+        return errorResult("saving library workout", error);
       }
     }
   );
