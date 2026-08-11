@@ -576,4 +576,67 @@ export function registerLibraryTools(server: McpServer, client: IntervalsClient)
       }
     }
   );
+
+  // ---- delete_library_item --------------------------------------------------
+  server.registerTool(
+    "delete_library_item",
+    {
+      description:
+        "Delete a workout, folder, or plan from the athlete's private library. " +
+        "Permanent — deleting a folder or plan also deletes all contained workouts. " +
+        "Requires confirm=true to execute.",
+      annotations: {
+        destructiveHint: true,
+      },
+      inputSchema: {
+        item_type: z.enum(["WORKOUT", "FOLDER", "PLAN"]).describe("Type of item to delete"),
+        item_id: z.number().int().describe("ID of the item to delete"),
+        confirm: z.boolean().describe("Must be explicitly true to confirm deletion"),
+      },
+      outputSchema: {
+        item_id: z.number().int(),
+        item_type: z.enum(["WORKOUT", "FOLDER", "PLAN"]),
+        deleted: z.boolean(),
+        deleted_ids: z.array(z.number().int()).optional(),
+        upstream: z.record(z.string(), z.unknown()).optional(),
+      },
+    },
+    async ({ item_type, item_id, confirm }) => {
+      try {
+        if (!confirm) {
+          throw new Error("confirm must be true to delete a library item.");
+        }
+
+        if (item_type === "WORKOUT") {
+          await client.get(`/athlete/${client.athleteId}/workouts/${item_id}`);
+          const deletedIds = await client.delete<number[]>(
+            `/athlete/${client.athleteId}/workouts/${item_id}`,
+            { others: "false" }
+          );
+          return textResult({
+            item_id,
+            item_type,
+            deleted: true,
+            deleted_ids: deletedIds,
+          });
+        }
+
+        const container = await findContainer(client, item_id);
+        if (container.type !== item_type) {
+          throw new Error(`Item ${item_id} is a ${container.type}, not ${item_type}.`);
+        }
+        const upstream = await client.delete<RecordValue>(
+          `/athlete/${client.athleteId}/folders/${item_id}`
+        );
+        return textResult({
+          item_id,
+          item_type,
+          deleted: true,
+          upstream,
+        });
+      } catch (error) {
+        return errorResult("deleting library item", error);
+      }
+    }
+  );
 }

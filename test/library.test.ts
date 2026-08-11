@@ -955,3 +955,224 @@ describe("save_library_workout", () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// Task 5: delete_library_item
+// ---------------------------------------------------------------------------
+
+describe("delete_library_item", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("has destructiveHint: true annotation and mentions cascading deletion in description", () => {
+    const { server } = makeServer();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const tool = (server as any)._registeredTools["delete_library_item"];
+    expect(tool).toBeDefined();
+    expect(tool.annotations?.destructiveHint).toBe(true);
+    expect(tool.description).toMatch(/delet.*(folder|plan).*delet.*contained.*workout/i);
+  });
+
+  it("confirm: false returns isError: true and makes zero fetch calls", async () => {
+    const mockFetch = vi.fn();
+    vi.stubGlobal("fetch", mockFetch);
+
+    const { server } = makeServer();
+    const result = await callTool(server, "delete_library_item", {
+      item_type: "WORKOUT",
+      item_id: 11,
+      confirm: false,
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toMatch(/confirm/i);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it("deletes a WORKOUT by first resolving the workout, then calling DELETE with others=false", async () => {
+    let callCount = 0;
+    const calls: { url: string; method?: string }[] = [];
+
+    vi.stubGlobal("fetch", vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      callCount++;
+      calls.push({ url, method: init?.method ?? "GET" });
+      if (callCount === 1) {
+        // Step 1: GET /athlete/i123/workouts/11 to resolve workout
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ id: 11, name: "SS-3x10", folder_id: 50 }),
+          text: () => Promise.resolve(""),
+        });
+      }
+      // Step 2: DELETE /athlete/i123/workouts/11?others=false
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve([11]),
+        text: () => Promise.resolve(JSON.stringify([11])),
+      });
+    }));
+
+    const { server } = makeServer("i123");
+    const result = await callTool(server, "delete_library_item", {
+      item_type: "WORKOUT",
+      item_id: 11,
+      confirm: true,
+    });
+
+    expect(result.isError).toBeFalsy();
+    expect(calls).toHaveLength(2);
+    expect(calls[0].url).toContain("/athlete/i123/workouts/11");
+    expect(calls[0].method).toBe("GET");
+    expect(calls[1].url).toContain("/athlete/i123/workouts/11?others=false");
+    expect(calls[1].method).toBe("DELETE");
+    expect(result.structuredContent).toEqual({
+      item_id: 11,
+      item_type: "WORKOUT",
+      deleted: true,
+      deleted_ids: [11],
+    });
+  });
+
+  it("deletes a FOLDER by resolving container and calling DELETE on /folders/{id}", async () => {
+    let callCount = 0;
+    const calls: { url: string; method?: string }[] = [];
+
+    vi.stubGlobal("fetch", vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      callCount++;
+      calls.push({ url, method: init?.method ?? "GET" });
+      if (callCount === 1) {
+        // findContainer → GET /athlete/i123/folders
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve([folderBikeSweet]),
+          text: () => Promise.resolve(""),
+        });
+      }
+      // DELETE /athlete/i123/folders/50
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ id: 50, deleted: true }),
+        text: () => Promise.resolve(JSON.stringify({ id: 50, deleted: true })),
+      });
+    }));
+
+    const { server } = makeServer("i123");
+    const result = await callTool(server, "delete_library_item", {
+      item_type: "FOLDER",
+      item_id: 50,
+      confirm: true,
+    });
+
+    expect(result.isError).toBeFalsy();
+    expect(calls).toHaveLength(2);
+    expect(calls[0].url).toContain("/athlete/i123/folders");
+    expect(calls[0].method).toBe("GET");
+    expect(calls[1].url).toContain("/athlete/i123/folders/50");
+    expect(calls[1].method).toBe("DELETE");
+    expect(result.structuredContent).toEqual(expect.objectContaining({
+      item_id: 50,
+      item_type: "FOLDER",
+      deleted: true,
+      upstream: { id: 50, deleted: true },
+    }));
+  });
+
+  it("deletes a PLAN by resolving container and calling DELETE on /folders/{id}", async () => {
+    let callCount = 0;
+    const calls: { url: string; method?: string }[] = [];
+
+    vi.stubGlobal("fetch", vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      callCount++;
+      calls.push({ url, method: init?.method ?? "GET" });
+      if (callCount === 1) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve([folderPlan]),
+          text: () => Promise.resolve(""),
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ id: 90, deleted: true }),
+        text: () => Promise.resolve(JSON.stringify({ id: 90, deleted: true })),
+      });
+    }));
+
+    const { server } = makeServer("i123");
+    const result = await callTool(server, "delete_library_item", {
+      item_type: "PLAN",
+      item_id: 90,
+      confirm: true,
+    });
+
+    expect(result.isError).toBeFalsy();
+    expect(calls[1].url).toContain("/athlete/i123/folders/90");
+    expect(calls[1].method).toBe("DELETE");
+    expect(result.structuredContent.item_type).toBe("PLAN");
+    expect(result.structuredContent.deleted).toBe(true);
+  });
+
+  it("returns an error and makes no DELETE if item_type mismatches the container type", async () => {
+    let callCount = 0;
+    const calls: { url: string; method?: string }[] = [];
+
+    vi.stubGlobal("fetch", vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      callCount++;
+      calls.push({ url, method: init?.method ?? "GET" });
+      // Returns folderBikeSweet (type is FOLDER)
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve([folderBikeSweet]),
+        text: () => Promise.resolve(""),
+      });
+    }));
+
+    const { server } = makeServer("i123");
+    const result = await callTool(server, "delete_library_item", {
+      item_type: "PLAN", // Mismatches stored FOLDER (id 50)
+      item_id: 50,
+      confirm: true,
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toMatch(/FOLDER.*PLAN|type/i);
+    expect(calls).toHaveLength(1); // findContainer only; no DELETE call
+  });
+
+  it("returns an error if the container is not found and makes no DELETE call", async () => {
+    const mockFetch = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve([]),
+      text: () => Promise.resolve(""),
+    });
+    vi.stubGlobal("fetch", mockFetch);
+
+    const { server } = makeServer("i123");
+    const result = await callTool(server, "delete_library_item", {
+      item_type: "FOLDER",
+      item_id: 999,
+      confirm: true,
+    });
+
+    expect(result.isError).toBe(true);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns an error if the workout is not found during initial lookup and makes no DELETE call", async () => {
+    const mockFetch = vi.fn().mockResolvedValueOnce({
+      ok: false,
+      status: 404,
+      text: () => Promise.resolve("Workout not found"),
+    });
+    vi.stubGlobal("fetch", mockFetch);
+
+    const { server } = makeServer("i123");
+    const result = await callTool(server, "delete_library_item", {
+      item_type: "WORKOUT",
+      item_id: 999,
+      confirm: true,
+    });
+
+    expect(result.isError).toBe(true);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+});
