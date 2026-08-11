@@ -224,9 +224,13 @@ function compactSavedWorkout(raw: RecordValue): RecordValue {
 
 /**
  * Add days to a YYYY-MM-DD date using UTC calendar component arithmetic.
+ * Validates the unshifted date against the input components before adding days.
  * Never treats athlete-local dates as instants.
  */
 export function addDays(date: string, days: number): string {
+  if (!Number.isInteger(days)) {
+    throw new Error(`days must be an integer, got ${days}.`);
+  }
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date);
   if (!match) {
     throw new Error(`Invalid date format: "${date}". Expected YYYY-MM-DD.`);
@@ -235,12 +239,23 @@ export function addDays(date: string, days: number): string {
   const y = Number(yearStr);
   const m = Number(monthStr);
   const d = Number(dayStr);
+
+  const check = new Date(Date.UTC(y, m - 1, d));
+  if (
+    check.getUTCFullYear() !== y ||
+    check.getUTCMonth() !== m - 1 ||
+    check.getUTCDate() !== d
+  ) {
+    throw new Error(`Invalid calendar date: "${date}".`);
+  }
+
   const dt = new Date(Date.UTC(y, m - 1, d + days));
   const resY = dt.getUTCFullYear();
   const resM = String(dt.getUTCMonth() + 1).padStart(2, "0");
   const resD = String(dt.getUTCDate()).padStart(2, "0");
   return `${resY}-${resM}-${resD}`;
 }
+
 
 const TIME_REGEX = /^(\d{2}):(\d{2})(:(\d{2}))?$/;
 
@@ -790,7 +805,8 @@ export function registerLibraryTools(server: McpServer, client: IntervalsClient)
                 .describe("Athlete-local timestamp YYYY-MM-DDTHH:mm:ss without timezone offset"),
               name: z.string().optional().describe("Optional name override for the calendar event"),
               calendar_id: z
-                .union([z.number().int(), z.string()])
+                .number()
+                .int()
                 .optional()
                 .describe("Optional destination calendar ID"),
             })
@@ -805,7 +821,8 @@ export function registerLibraryTools(server: McpServer, client: IntervalsClient)
           .optional()
           .describe("PLAN mode only: default start time HH:mm or HH:mm:ss (fallback: 00:00:00)"),
         calendar_id: z
-          .union([z.number().int(), z.string()])
+          .number()
+          .int()
           .optional()
           .describe("PLAN mode only: destination calendar ID"),
       },
@@ -837,9 +854,12 @@ export function registerLibraryTools(server: McpServer, client: IntervalsClient)
             throw new Error(`workouts list contains ${workouts.length} items, exceeding the 100-item batch limit.`);
           }
 
-          // Preflight validation: timestamps & duplicate checks
+          // Preflight validation: calendar_id, timestamps & duplicate checks before ANY fetch
           const seen = new Set<string>();
           for (const w of workouts) {
+            if (w.calendar_id !== undefined && (typeof w.calendar_id !== "number" || !Number.isInteger(w.calendar_id))) {
+              throw new Error(`calendar_id for workout ${w.workout_id} must be an integer, got ${String(w.calendar_id)}.`);
+            }
             validateLocalTimestamp(w.start_date_local, `workout ${w.workout_id} timestamp`);
             const key = `${w.workout_id}@${w.start_date_local}`;
             if (seen.has(key)) {
@@ -865,14 +885,13 @@ export function registerLibraryTools(server: McpServer, client: IntervalsClient)
           const rawStartDate = start_date ?? start_date_local;
           if (!rawStartDate) throw new Error("start_date is required for PLAN mode.");
 
-          // Validate date format YYYY-MM-DD
-          const baseDateMatch = /^(\d{4})-(\d{2})-(\d{2})/.exec(rawStartDate);
-          if (!baseDateMatch) {
-            throw new Error(`Invalid start_date format: "${rawStartDate}". Expected YYYY-MM-DD.`);
+          // Validate entire start_date through strict addDays without slicing
+          const baseDate = addDays(rawStartDate, 0);
+
+          // Validate calendar_id before any fetch
+          if (calendar_id !== undefined && (typeof calendar_id !== "number" || !Number.isInteger(calendar_id))) {
+            throw new Error(`calendar_id must be an integer, got ${String(calendar_id)}.`);
           }
-          const baseDate = baseDateMatch[0];
-          // Validate baseDate is valid calendar date
-          addDays(baseDate, 0);
 
           // Resolve container and verify PLAN type
           const container = await findContainer(client, plan_id);

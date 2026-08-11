@@ -1207,6 +1207,15 @@ describe("schedule_library helpers", () => {
     it("throws on invalid date string", () => {
       expect(() => addDays("not-a-date", 1)).toThrow();
     });
+
+    it("rejects impossible calendar dates like 2026-02-30 and 2026-13-01", () => {
+      expect(() => addDays("2026-02-30", 1)).toThrow(/calendar date|invalid/i);
+      expect(() => addDays("2026-13-01", 1)).toThrow(/calendar date|invalid/i);
+    });
+
+    it("requires days to be an integer", () => {
+      expect(() => addDays("2026-08-31", 1.5)).toThrow(/integer/i);
+    });
   });
 
   describe("resolveWorkoutTime", () => {
@@ -1473,6 +1482,31 @@ describe("schedule_library", () => {
       expect(result.content[0].text).toContain("Bulk scheduling outcome is unknown; verify the calendar before retrying.");
       expect(JSON.stringify(result)).not.toContain('"created_count":0');
     });
+
+    it("rejects non-integer or string calendar_id before fetching workouts", async () => {
+      const mockFetch = vi.fn();
+      vi.stubGlobal("fetch", mockFetch);
+
+      const { server } = makeServer("i123");
+      const resultString = await callTool(server, "schedule_library", {
+        mode: "WORKOUTS",
+        workouts: [
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          { workout_id: 11, start_date_local: "2026-08-18T19:00:00", calendar_id: "cal1" as any },
+        ],
+      });
+      expect(resultString.isError).toBe(true);
+      expect(mockFetch).not.toHaveBeenCalled();
+
+      const resultFloat = await callTool(server, "schedule_library", {
+        mode: "WORKOUTS",
+        workouts: [
+          { workout_id: 11, start_date_local: "2026-08-18T19:00:00", calendar_id: 2.5 },
+        ],
+      });
+      expect(resultFloat.isError).toBe(true);
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
   });
 
   describe("PLAN mode", () => {
@@ -1700,6 +1734,61 @@ describe("schedule_library", () => {
 
       expect(result.isError).toBe(true);
       expect(postCalled).toBe(false);
+    });
+
+    it("rejects an impossible start_date before fetch or POST", async () => {
+      const mockFetch = vi.fn();
+      vi.stubGlobal("fetch", mockFetch);
+
+      const { server } = makeServer("i123");
+      const result = await callTool(server, "schedule_library", {
+        mode: "PLAN",
+        plan_id: 90,
+        start_date: "2026-02-30",
+      });
+
+      expect(result.isError).toBe(true);
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it("rejects a start_date with trailing characters before fetch or POST", async () => {
+      const mockFetch = vi.fn();
+      vi.stubGlobal("fetch", mockFetch);
+
+      const { server } = makeServer("i123");
+      const result = await callTool(server, "schedule_library", {
+        mode: "PLAN",
+        plan_id: 90,
+        start_date: "2026-08-31junk",
+      });
+
+      expect(result.isError).toBe(true);
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it("rejects non-integer or string calendar_id before fetch or POST", async () => {
+      const mockFetch = vi.fn();
+      vi.stubGlobal("fetch", mockFetch);
+
+      const { server } = makeServer("i123");
+      const resultString = await callTool(server, "schedule_library", {
+        mode: "PLAN",
+        plan_id: 90,
+        start_date: "2026-08-31",
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        calendar_id: "primary" as any,
+      });
+      expect(resultString.isError).toBe(true);
+      expect(mockFetch).not.toHaveBeenCalled();
+
+      const resultFloat = await callTool(server, "schedule_library", {
+        mode: "PLAN",
+        plan_id: 90,
+        start_date: "2026-08-31",
+        calendar_id: 3.14,
+      });
+      expect(resultFloat.isError).toBe(true);
+      expect(mockFetch).not.toHaveBeenCalled();
     });
   });
 });
