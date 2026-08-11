@@ -51,6 +51,7 @@ const workoutRaw = {
   icu_intensity: 0.87,
   targets: ["POWER"],
   tags: ["build"],
+  updated: "2026-08-01T10:00:00",
   athlete_id: "i123",
 };
 
@@ -298,9 +299,11 @@ describe("get_library_workout", () => {
       id: 11,
       name: "SS-3x10",
       description: "Main Set\n- 3x\n- 10m 90%",
+      updated: "2026-08-01T10:00:00",
     }));
     expect(result.structuredContent.workout).not.toHaveProperty("workout_doc");
     expect(result.structuredContent.workout).not.toHaveProperty("attachments");
+    expect(result.structuredContent.workout).not.toHaveProperty("updated_at");
   });
 
   it("calls the correct upstream endpoint", async () => {

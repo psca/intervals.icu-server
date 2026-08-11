@@ -95,7 +95,7 @@ function fullWorkout(raw: RecordValue): RecordValue {
     sub_type: raw.sub_type,
     for_week: raw.for_week,
     distance: raw.distance,
-    updated_at: raw.updated_at,
+    updated: raw.updated,
     // workout_doc and attachments intentionally omitted
   };
 }
