@@ -110,9 +110,9 @@ Selected-workout mode permits per-workout name and timestamp overrides. Plan mod
 
 ### `delete_library_item`
 
-This tool will delete a `WORKOUT`, `FOLDER`, or `PLAN`. It requires the item type, item ID, and `confirm: true`. Its MCP annotations will identify it as destructive.
+This tool will delete a `WORKOUT`, `FOLDER`, or `PLAN`. It requires the item type, item ID, and `confirm: true`. Its MCP annotations will identify it as destructive. Intervals.icu inherently deletes every contained workout when a folder or plan is deleted, so the tool description and confirmation error will state that cascade explicitly.
 
-The server will resolve the item before deletion and reject a mismatched item type. It will not request deletion of additional plan workouts through optional upstream cascade parameters unless that behavior is added through a separately designed, explicit input. The response will include the requested item ID, item type, deletion status, and any additional IDs or metadata returned by Intervals.icu.
+The server will resolve the item before deletion and reject a mismatched item type. Deleting one workout will use `others=false`, so it will not request deletion of other workouts added to the same plan at the same time. Deleting a folder or plan uses the upstream container endpoint and therefore deletes its contents. The response will include the requested item ID, item type, deletion status, and any additional IDs or metadata returned by Intervals.icu.
 
 ## Errors and Safety
 
