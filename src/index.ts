@@ -6,6 +6,7 @@ import { IntervalsClient } from "./client.js";
 import { registerActivityTools } from "./tools/activities.js";
 import { registerAthleteTools } from "./tools/athlete.js";
 import { registerEventTools } from "./tools/events.js";
+import { registerLibraryTools } from "./tools/library.js";
 import { registerWellnessTools } from "./tools/wellness.js";
 import { registerWeeklySnapshotTool } from "./tools/weekly-snapshot.js";
 import { registerSplitReconciliationTools } from "./tools/split-reconciliation.js";
@@ -862,6 +863,7 @@ const apiHandler = {
     registerActivityTools(server, client);
     registerAthleteTools(server, client);
     registerEventTools(server, client);
+    registerLibraryTools(server, client);
     registerWellnessTools(server, client);
     registerWeeklySnapshotTool(server, client);
     registerSplitReconciliationTools(server, client);

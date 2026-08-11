@@ -18,13 +18,13 @@ describe("createStdioServer", () => {
     vi.clearAllMocks();
   });
 
-  it("creates an McpServer with all 24 tools registered", async () => {
+  it("creates an McpServer with all 30 tools registered", async () => {
     const server = await createStdioServer("test-api-key", "i123");
 
     // McpServer exposes registered tools via _registeredTools (plain object)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const tools = (server as any)._registeredTools as Record<string, unknown>;
-    expect(Object.keys(tools).length).toBe(24);
+    expect(Object.keys(tools).length).toBe(30);
   });
 
   it("registers all expected tool names", async () => {
@@ -38,6 +38,7 @@ describe("createStdioServer", () => {
       "compare_similar_activities",
       "delete_event",
       "delete_events_by_date_range",
+      "delete_library_item",
       "get_activities",
       "get_activity_details",
       "get_activity_intervals",
@@ -50,6 +51,7 @@ describe("createStdioServer", () => {
       "get_events",
       "get_gear",
       "get_hr_curves",
+      "get_library_workout",
       "get_pace_curves",
       "get_power_curves",
       "get_training_readiness",
@@ -57,9 +59,14 @@ describe("createStdioServer", () => {
       "get_wellness_data",
       "preview_split_workout_reconciliation",
       "reconcile_split_workout",
+      "save_library_container",
+      "save_library_workout",
+      "schedule_library",
       "search_activities",
+      "search_workout_library",
     ]);
   });
+
 
   it("throws when API_KEY is missing", async () => {
     await expect(createStdioServer("", "i123")).rejects.toThrow("API_KEY");

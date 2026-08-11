@@ -8,10 +8,11 @@ import { IntervalsClient } from "./client.js";
 import { registerActivityTools } from "./tools/activities.js";
 import { registerAthleteTools } from "./tools/athlete.js";
 import { registerEventTools } from "./tools/events.js";
+import { registerLibraryTools } from "./tools/library.js";
 import { registerWellnessTools } from "./tools/wellness.js";
 import { registerWeeklySnapshotTool } from "./tools/weekly-snapshot.js";
-import { registerAnalysisTools } from "./tools/analysis.js";
 import { registerSplitReconciliationTools } from "./tools/split-reconciliation.js";
+import { registerAnalysisTools } from "./tools/analysis.js";
 
 export async function createStdioServer(
   apiKey: string,
@@ -26,10 +27,11 @@ export async function createStdioServer(
   registerActivityTools(server, client);
   registerAthleteTools(server, client);
   registerEventTools(server, client);
+  registerLibraryTools(server, client);
   registerWellnessTools(server, client);
   registerWeeklySnapshotTool(server, client);
-  registerAnalysisTools(server, client);
   registerSplitReconciliationTools(server, client);
+  registerAnalysisTools(server, client);
 
   const transport = new StdioServerTransport();
   await server.connect(transport);

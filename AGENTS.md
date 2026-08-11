@@ -6,7 +6,7 @@
 
 ## Project overview
 
-TypeScript Cloudflare Worker implementing an MCP server for intervals.icu training data. Provides 24 tools for activities, athlete profiles and curves, wellness, events, split-workout reconciliation, weather analysis, and compact athlete-analysis workflows. Access is controlled by GitHub or Google OAuth. Each provider identity maps to a separate account ID of the form `<provider>:<stable-subject>`. Users provide their own intervals.icu athlete ID and API key, collected during first-time OAuth via `/configure` and stored AES-256-GCM encrypted in OAUTH_KV.
+TypeScript Cloudflare Worker implementing an MCP server for intervals.icu training data. Provides 30 tools for activities, athlete profiles and curves, wellness, events, workout library discovery and scheduling, split-workout reconciliation, weather analysis, and compact athlete-analysis workflows. Access is controlled by GitHub or Google OAuth. Each provider identity maps to a separate account ID of the form `<provider>:<stable-subject>`. Users provide their own intervals.icu athlete ID and API key, collected during first-time OAuth via `/configure` and stored AES-256-GCM encrypted in OAUTH_KV.
 
 ## Tech stack
 
@@ -33,6 +33,7 @@ src/auth.ts           -- OAuth helpers: provider URL construction, code exchange
 src/crypto.ts         -- HKDF+AES-GCM utilities: hexToBytes, encryptApiKey, decryptApiKey
                          (per-user credential encryption using CREDENTIALS_MASTER_KEY)
 src/client.ts         -- IntervalsClient: HTTP client with Basic auth for intervals.icu API
+                         (supports GET, POST with URL query params, and typed DELETE with fallback)
 src/analysis.ts       -- Pure shared analysis helpers: discipline/zone normalization, load labels and spikes,
                          context comparability, evidence sufficiency, and date/statistical utilities
 src/formatting.ts     -- 5 pure functions that format API responses into human-readable text
@@ -43,6 +44,7 @@ src/tools/            -- Tool registration files (one per domain)
   activities.ts       -- 6 tools: list, details, intervals, streams, route, weather
   athlete.ts          -- 6 tools: profile, search, power/pace/HR curves, gear
   events.ts           -- 5 tools: list, get, create/update, delete, delete by range
+  library.ts          -- 6 tools: search, get workout, save container, save workout, confirmed delete, schedule
   wellness.ts         -- 1 tool: wellness data (HRV, CTL/ATL/TSB, sleep)
   weekly-snapshot.ts  -- 1 tool: athlete-local weekly activity/event progress, safe pairing statuses, aggregates
   split-reconciliation.ts -- 2 tools: preview and confirmed post-activity split-workout reconciliation
@@ -62,7 +64,8 @@ test/                 -- Unit tests (vitest)
   analysis.test.ts    -- Analysis-tool semantic safeguards and evidence/context unit tests
   events.test.ts      -- Event tool contracts and safety behavior unit tests
   formatting.test.ts  -- Response formatting unit tests
-  stdio.test.ts       -- 4 tests: tool count, tool names, missing credential errors
+  library.test.ts     -- Search projections, container/workout validation, event copy, deletion guards, date arithmetic, and scheduling tests
+  stdio.test.ts       -- 4 tests: tool count (30), tool names, missing credential errors
   weather.test.ts     -- Weather pipeline unit tests
   weekly-snapshot.test.ts -- Weekly progress, pairing, aggregate, and description-cap unit tests
   split-reconciliation.test.ts -- Detection, proportional allocation, structure splitting, stale preview, and pairing tests
@@ -89,8 +92,10 @@ test/                 -- Unit tests (vitest)
 - **Athlete tools:** `src/tools/athlete.ts` adds read-only profile/search/curve/gear endpoints used by the coach skill for zone resolution and benchmark lookup. `sportSettings` entries use `types[]` arrays, not a single `type` field, and swim threshold pace should be interpreted as `/100m` pace when `pace_units === "SECS_100M"`.
 - **Analysis semantics:** `src/analysis.ts` centralizes zone normalization, context comparability, evidence sufficiency, load labels, and load-spike calculations. Bike speed is informational outside `SAME_ROUTE` comparisons with a shared non-null route ID. Load `INCREASED`/`DECREASED` is volume direction, never a fitness verdict. Server-estimated discipline CTL/ATL/TSB must not turn `LOW_RECENT_TRAINING` into a positive readiness signal. Discipline trend summaries use the shortest requested window, expose that choice as `summary_window_weeks`, and require both periods to meet the minimum session count before returning a directional or stable summary. Sparse curve periods remain visible but their aggregate threshold status is `INSUFFICIENT_DATA`.
 - **Weekly snapshot semantics:** Pairing is derived from `activity.paired_event_id`; statuses are only `COMPLETED`, `UNPAIRED_COMPLETION`, `MISSED`, or `PLANNED`. Unpaired activity `compliance` is `null`; do not introduce `PARTIALLY_COMPLETED` until upstream semantics are documented. Event descriptions remain enabled and capped at 2,000 characters; do not add wellness data to the weekly calendar.
+- **Workout library semantics:** Private library scope only (matching `athlete_id === client.athleteId`). Containers are flat `FOLDER` (reusable standalone workouts, no `day` offset) or progressive `PLAN` (requires integer `day >= 0`). `search_workout_library` strips `workout_doc`/attachments and truncates descriptions to 120 chars; `save_library_workout` rejects raw `workout_doc`. `delete_library_item` requires `confirm: true`; deleting a container permanently cascades to contained workouts. `schedule_library` performs complete preflight and full-workout retrieval before a single bulk write (max 100 items), enforces integer `calendar_id`, rejects exact duplicate timestamps for the same workout, adds plan day offsets with leap-safe date arithmetic, and reports bulk failures with explicit unknown-outcome messaging.
 - **Split reconciliation:** Treat `Ride` and `VirtualRide` as one cycling family; planned indoor metadata is not a gate and completed intensity above 80% or missing is advisory only. Never invent an override. Apply only after explicit athlete approval with the exact preview fingerprint. The handler rebuilds the candidate from detailed current records before the first write; failed applies report rollback complete only after read-back verification, and an event create without a usable ID remains an incomplete rollback.
-- **stdio entry point:** `src/stdio.ts` exports `createStdioServer(apiKey, athleteId)` — validates credentials, registers all 24 tools, connects `StdioServerTransport`. When run directly (`npm run stdio`), reads `API_KEY` and `ATHLETE_ID` from `process.env`. The CF Worker entry point (`src/index.ts`) is not affected.
+- **stdio entry point:** `src/stdio.ts` exports `createStdioServer(apiKey, athleteId)` — validates credentials, registers all 30 tools, connects `StdioServerTransport`. When run directly (`npm run stdio`), reads `API_KEY` and `ATHLETE_ID` from `process.env`. The CF Worker entry point (`src/index.ts`) is not affected.
+
 - **No auth in stdio mode:** Credentials are passed directly as env vars by the MCP client. OAuth is CF Worker only.
 
 ## Commands

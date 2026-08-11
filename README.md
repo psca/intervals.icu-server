@@ -1,6 +1,6 @@
 # intervals-mcp
 
-An MCP (Model Context Protocol) server for [intervals.icu](https://intervals.icu) training data. Provides 24 tools for accessing activities, athlete profiles and curves, wellness data, events/workouts, split-workout reconciliation, weather analysis, and compact athlete-analysis workflows -- designed to be consumed by LLM-powered coaching assistants.
+An MCP (Model Context Protocol) server for [intervals.icu](https://intervals.icu) training data. Provides 30 tools for accessing activities, athlete profiles and curves, wellness data, events/workouts, workout library management and scheduling, split-workout reconciliation, weather analysis, and compact athlete-analysis workflows -- designed to be consumed by LLM-powered coaching assistants.
 
 Two modes:
 - **Remote managed** -- persistent public endpoint with GitHub and Google OAuth configured, plus per-user intervals.icu credentials
@@ -104,6 +104,12 @@ Use that page to update your intervals.icu athlete ID or API key, or to disconne
 | `get_events` | Planned workouts/events by date range |
 | `get_event_by_id` | Single event details |
 | `add_or_update_event` | Create or modify planned workouts, with optional athlete-local `start_date_local` scheduling (`YYYY-MM-DDTHH:mm:ss`) |
+| `search_workout_library` | Search athlete's private folders, plans, and workouts with compact metadata projection |
+| `get_library_workout` | Retrieve a single library workout by ID without description truncation |
+| `save_library_container` | Create or update a top-level `FOLDER` or progressive `PLAN` container |
+| `save_library_workout` | Create, update, or copy calendar events into library workouts (`NEW`, `UPDATE`, `EVENT` sources) |
+| `delete_library_item` | Explicitly confirmed deletion (`confirm: true`) of a library workout, folder, or plan (deleting a container cascades to contained workouts) |
+| `schedule_library` | Bulk calendar scheduling in `WORKOUTS` mode (up to 100 library workouts) or `PLAN` mode (plan expansion from `start_date`) |
 | `preview_split_workout_reconciliation` | Read-only preview of eligible easy continuous `Ride` or `VirtualRide` workouts split across same-day cycling activities; completed intensity above 80% is advisory |
 | `reconcile_split_workout` | Confirmed, fingerprint-protected event split, activity pairing, and activity rename workflow |
 | `delete_event` | Delete a single event |
@@ -112,6 +118,14 @@ Use that page to update your intervals.icu athlete ID or API key, or to disconne
 Planned event writes accept either the backward-compatible date-only `start_date`
 or `start_date_local` for a specific wall-clock time in the athlete timezone configured
 in Intervals.icu. Do not append `Z` or a UTC offset to `start_date_local`.
+
+### Workout Library semantics
+
+- **Scope:** Operates strictly on the authenticated athlete's private library (`athlete_id === currentAthleteId`). Shared or community folders and workouts are excluded.
+- **Folders vs. Plans:** Containers are either flat `FOLDER` collections (reusable standalone workouts without day offsets) or progressive `PLAN` schedules (multi-day progressions where each workout defines a non-negative integer `day` offset from plan start). Folders reject `day` offsets; plans require integer `day >= 0`.
+- **Compact discovery:** `search_workout_library` projects compact metadata to conserve context (omitting raw `workout_doc`, attachments, and truncating descriptions to 120 characters). `get_library_workout` returns full details for a single workout when authoring or reviewing.
+- **Confirmed deletions & cascade warning:** `delete_library_item` requires `confirm: true`. Deleting a `FOLDER` or `PLAN` container permanently deletes all contained workouts in intervals.icu (destructive cascade).
+- **Scheduling:** `schedule_library` supports `WORKOUTS` mode (individual workouts with local timestamps) and `PLAN` mode (expands zero-based day offsets from `start_date` across month/year boundaries, prioritizing saved workout times over default start times). All validation and workout retrieval complete server-side before performing a single bulk POST (max 100 items). Upstream bulk writes are not transactional; if the upstream request fails, the outcome is reported as unknown and the calendar must be inspected before retrying.
 
 ### Analysis semantics
 
@@ -304,14 +318,16 @@ src/
     activities.ts       6 tools: list, details, intervals, streams, route, weather
     athlete.ts          6 tools: profile, search, power/pace/HR curves, gear
     events.ts           5 tools: list, get, create/update, delete, delete by range
+    library.ts          6 tools: search, get workout, save container, save workout, confirmed delete, schedule
     wellness.ts         1 tool: wellness data
     weekly-snapshot.ts  1 tool: athlete-local weekly progress and pairing statuses
     split-reconciliation.ts 2 tools: preview and confirmed reconciliation
     analysis.ts         3 tools: similar activity comparison, readiness, discipline trends
 test/
   activities.test.ts, athlete.test.ts, analysis.test.ts, auth.test.ts, client.test.ts,
-  crypto.test.ts, events.test.ts, formatting.test.ts, index.test.ts, stdio.test.ts,
-  weather.test.ts, weekly-snapshot.test.ts, split-reconciliation.test.ts, wellness.test.ts
+  crypto.test.ts, events.test.ts, formatting.test.ts, index.test.ts, library.test.ts,
+  stdio.test.ts, weather.test.ts, weekly-snapshot.test.ts, split-reconciliation.test.ts,
+  wellness.test.ts
 ```
 
 **Stateless design** -- each request creates a fresh MCP server instance. No Durable Objects or session state required. OAuth tokens and encrypted per-user credentials are stored in Cloudflare KV.
