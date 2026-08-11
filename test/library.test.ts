@@ -513,4 +513,19 @@ describe("save_library_container", () => {
 
     expect(result.isError).toBe(true);
   });
+
+  it("CREATE without type returns error and makes no fetch call", async () => {
+    const mockFetch = vi.fn();
+    vi.stubGlobal("fetch", mockFetch);
+
+    const { server } = makeServer();
+    const result = await callTool(server, "save_library_container", {
+      action: "CREATE",
+      name: "Missing Type Folder",
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toMatch(/type.*required/i);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
 });

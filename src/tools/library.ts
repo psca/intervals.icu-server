@@ -310,6 +310,10 @@ export function registerLibraryTools(server: McpServer, client: IntervalsClient)
           }
         }
 
+        if (action === "CREATE" && !type) {
+          throw new Error("type is required for CREATE.");
+        }
+
         if (action === "CREATE") {
           const payload = containerPayload(input as RecordValue);
           const saved = await client.post<RecordValue>(
