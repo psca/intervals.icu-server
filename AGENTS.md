@@ -6,7 +6,7 @@
 
 ## Project overview
 
-TypeScript Cloudflare Worker implementing an MCP server for intervals.icu training data. Provides 30 tools for activities, athlete profiles and curves, wellness, events, workout library discovery and scheduling, split-workout reconciliation, weather analysis, and compact athlete-analysis workflows. Access is controlled by GitHub or Google OAuth. Each provider identity maps to a separate account ID of the form `<provider>:<stable-subject>`. Users provide their own intervals.icu athlete ID and API key, collected during first-time OAuth via `/configure` and stored AES-256-GCM encrypted in OAUTH_KV.
+TypeScript Cloudflare Worker implementing an MCP server for intervals.icu training data. Provides 32 tools for activities, athlete profiles and curves, wellness, events, workout library discovery and scheduling, split-workout reconciliation, weather analysis, and compact athlete-analysis workflows. Access is controlled by GitHub or Google OAuth. Each provider identity maps to a separate account ID of the form `<provider>:<stable-subject>`. Users provide their own intervals.icu athlete ID and API key, collected during first-time OAuth via `/configure` and stored AES-256-GCM encrypted in OAUTH_KV.
 
 ## Tech stack
 
@@ -41,7 +41,7 @@ src/weather.ts        -- Pure weather utilities + computeActivityWeather pipelin
 src/utils.ts          -- Shared utilities: defaultDateRange() and toolHandler() wrapper
                          (toolHandler wraps tool logic in try/catch, returns MCP text content)
 src/tools/            -- Tool registration files (one per domain)
-  activities.ts       -- 6 tools: list, details, intervals, streams, route, weather
+  activities.ts       -- 8 tools: create/update completed, list, details, intervals, streams, route, weather
   athlete.ts          -- 6 tools: profile, search, power/pace/HR curves, gear
   events.ts           -- 5 tools: list, get, create/update, delete, delete by range
   library.ts          -- 6 tools: search, get workout, save container, save workout, confirmed delete, schedule
@@ -55,7 +55,8 @@ scripts/              -- Helper scripts for manual endpoint checks
 tsconfig.stdio.json   -- Node.js tsconfig ("types": ["node"]), excludes CF types; used by npm run stdio
 vitest.config.ts      -- cloudflare:workers module stub config (at project root, not inside test/)
 test/                 -- Unit tests (vitest)
-  activities.test.ts  -- Activity tool sampling/route unit tests
+  activities.test.ts  -- Completed-activity creation/validation contracts and activity sampling/route unit tests
+  update-activity.test.ts -- Partial activity updates, feedback/pairing edits, duration validation, and failure contracts
   index.test.ts       -- defaultHandler + apiHandler integration tests
   auth.test.ts        -- OAuth helper unit tests
   client.test.ts      -- IntervalsClient unit tests
@@ -65,7 +66,7 @@ test/                 -- Unit tests (vitest)
   events.test.ts      -- Event tool contracts and safety behavior unit tests
   formatting.test.ts  -- Response formatting unit tests
   library.test.ts     -- Search projections, container/workout validation, event copy, deletion guards, date arithmetic, and scheduling tests
-  stdio.test.ts       -- 4 tests: tool count (30), tool names, missing credential errors
+  stdio.test.ts       -- 4 tests: tool count (32), tool names, missing credential errors
   weather.test.ts     -- Weather pipeline unit tests
   weekly-snapshot.test.ts -- Weekly progress, pairing, aggregate, and description-cap unit tests
   split-reconciliation.test.ts -- Detection, proportional allocation, structure splitting, stale preview, and pairing tests
@@ -86,7 +87,9 @@ test/                 -- Unit tests (vitest)
 - **Settings session expiry:** If the `settings_session` cookie exists but the KV entry has expired (7-day TTL), `GET /settings` restarts provider OAuth rather than returning a 401 so users can recover cleanly.
 - **Shared page CSS:** All HTML responses use a `PAGE_CSS` constant exported from `src/styles.ts`. Edit it there to restyle all pages at once.
 - **Error handling:** Every tool wraps logic in try/catch and returns error text to the MCP client (never crashes the Worker).
+- **Completed activities:** `create_completed_activity` writes JSON to `/athlete/{id}/activities/manual`. Require nonempty name/type, a valid athlete-local timestamp, and positive integer `moving_time` seconds. Optional `elapsed_time` defaults to `moving_time` and cannot be shorter; `distance` is nonnegative metres. Strength sessions use `WeightTraining` and preserve exercises/sets in `description`; do not infer RPE, calories, training load, or active lifting time. Optional athlete-reported `icu_rpe` is an integer 1–10; `feel` is an integer 1–5 (1=strong, 3=normal, 5=weak). Optional `paired_event_id` is a positive integer calendar event ID, not a library workout ID. Optional `icu_training_load` is a supplied nonnegative integer. Do not convert `session_rpe` to training load or copy planned load when pairing; return the upstream activity as authoritative. Only supported fields are submitted. A write failure or response without a usable activity ID has an unknown outcome; inspect activities before retrying. `external_id` is not a guarantee of idempotency.
 - **Sampling logic:** `computeSampleIndices()` in `activities.ts` handles time-based downsampling for GPS streams. Auto-injects `time` stream type when not requested.
+- **Completed activity updates:** `update_completed_activity` requires `activity_id` and at least one supported change, reads the target first, and sends only supplied fields plus `id` to `PUT /activity/{id}`. Reject a missing/mismatched target or explicit different-athlete ownership. Omitted fields are preserved; no creation defaults apply. `paired_event_id: null` unpairs and an empty description clears notes. Duration edits validate effective moving/elapsed values against the existing counterpart; require both if the counterpart is unusable. Never infer feedback or load. A failed write or response ID mismatch is an unknown outcome requiring inspection before retrying. Both activity write tools return upstream state rather than promising requested fields were accepted.
 - **Weather pipeline:** `get_activity_weather` does everything server-side: fetches GPS streams, calls Open-Meteo (forecast or archive based on age), computes per-waypoint headwind/tailwind using circular bearing math.
 - **Circular math:** Wind direction averaging uses trigonometric circular mean (atan2 of sin/cos sums). Headwind detection uses `(... + 360) % 360` to handle JS negative modulo.
 - **Athlete tools:** `src/tools/athlete.ts` adds read-only profile/search/curve/gear endpoints used by the coach skill for zone resolution and benchmark lookup. `sportSettings` entries use `types[]` arrays, not a single `type` field, and swim threshold pace should be interpreted as `/100m` pace when `pace_units === "SECS_100M"`.
@@ -94,7 +97,7 @@ test/                 -- Unit tests (vitest)
 - **Workout library semantics:** Uses the authenticated athlete's private library endpoints. Records with an explicit mismatched `athlete_id` are excluded; records with an omitted `athlete_id` are accepted as owned results; shared/community library discovery is out of scope. Containers are flat `FOLDER` (reusable standalone workouts, no `day` offset) or progressive `PLAN` (requires integer `day >= 0`). Compact workout search results omit workout descriptions, `workout_doc`, and attachments (container metadata may include container description); `get_library_workout` returns the workout description while omitting raw `workout_doc` and attachments; `save_library_workout` rejects raw `workout_doc`. `delete_library_item` requires `confirm: true`; deleting a container permanently cascades to contained workouts. `schedule_library` performs complete preflight and full-workout retrieval before a single bulk write (max 100 items), enforces integer `calendar_id`, rejects exact duplicate timestamps for the same workout, adds plan day offsets with leap-safe date arithmetic, and reports bulk failures with explicit unknown-outcome messaging.
 - **Split reconciliation:** Treat `Ride` and `VirtualRide` as one cycling family; planned indoor metadata is not a gate and completed intensity above 80% or missing is advisory only. Never invent an override. Apply only after explicit athlete approval with the exact preview fingerprint. The handler rebuilds the candidate from detailed current records before the first write; failed applies report rollback complete only after read-back verification, and an event create without a usable ID remains an incomplete rollback.
 
-- **stdio entry point:** `src/stdio.ts` exports `createStdioServer(apiKey, athleteId)` — validates credentials, registers all 30 tools, connects `StdioServerTransport`. When run directly (`npm run stdio`), reads `API_KEY` and `ATHLETE_ID` from `process.env`. The CF Worker entry point (`src/index.ts`) is not affected.
+- **stdio entry point:** `src/stdio.ts` exports `createStdioServer(apiKey, athleteId)` — validates credentials, registers all 32 tools, connects `StdioServerTransport`. When run directly (`npm run stdio`), reads `API_KEY` and `ATHLETE_ID` from `process.env`. The CF Worker entry point (`src/index.ts`) is not affected.
 
 - **No auth in stdio mode:** Credentials are passed directly as env vars by the MCP client. OAuth is CF Worker only.
 

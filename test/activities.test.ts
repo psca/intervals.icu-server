@@ -1,6 +1,8 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { IntervalsClient } from "../src/client";
 import { computeSampleIndices, registerActivityTools } from "../src/tools/activities";
+import type { ToolTextResult } from "../src/tools/result";
 
 vi.mock("../src/weather", () => ({
   computeActivityWeather: vi.fn().mockResolvedValue({
@@ -40,6 +42,151 @@ function expectTextToMirrorStructuredContent(result: { content: { type: "text"; 
   expect(result.content[0]?.type).toBe("text");
   expect(JSON.parse(result.content[0]?.text ?? "")).toEqual(result.structuredContent);
 }
+
+describe("create_completed_activity", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  const minimal = {
+    name: "Session A",
+    type: "WeightTraining",
+    start_date_local: "2026-01-15T07:00:00",
+    moving_time: 2760,
+  };
+
+  function setup(response: unknown = { id: "i123456", name: "Session A" }) {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(response)));
+    vi.stubGlobal("fetch", fetchMock);
+    const server = new McpServer({ name: "test", version: "1.0.0" });
+    registerActivityTools(server, new IntervalsClient("test-key", "i123"));
+    // Match the existing tool tests while exercising the real HTTP client.
+    const tools = (server as unknown as { _registeredTools: Record<string, {
+      handler: (args: Record<string, unknown>, extra: object) => Promise<ToolTextResult>;
+    }> })._registeredTools;
+    const call = (args: Record<string, unknown>) => tools.create_completed_activity.handler(args, {});
+    return { call, fetchMock };
+  }
+
+  it("creates the supplied strength session and preserves all sets in the description", async () => {
+    const description = `Romanian Deadlift (Barbell)
+Set 1: 60 kg × 10 reps
+Set 2: 60 kg × 10 reps
+Set 3: 60 kg × 10 reps
+Leg Press (Machine)
+Set 1: 90 kg × 12 reps
+Set 2: 90 kg × 12 reps
+Set 3: 90 kg × 15 reps
+Leg Extension (Machine)
+Set 1: 33 kg × 15 reps
+Set 2: 40 kg × 15 reps
+Seated Calf Raise
+Set 1: 50 kg × 15 reps
+Set 2: 50 kg × 15 reps
+Set 3: 50 kg × 15 reps
+Hip Adduction (Machine)
+Set 1: 22.5 kg × 15 reps
+Set 2: 22.5 kg × 15 reps
+Dumbbell Step Up
+Set 1: 25 kg × 4 reps
+Set 2: 0 kg × 10 reps`;
+    const activity = { id: "i123456", ...minimal, elapsed_time: 2760, description };
+    const { call, fetchMock } = setup(activity);
+    const result = await call({ ...minimal, description, external_id: "session-a-example" });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("https://intervals.icu/api/v1/athlete/i123/activities/manual");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(String(init.body))).toEqual({
+      ...minimal, elapsed_time: 2760, description, external_id: "session-a-example",
+    });
+    expect(result.isError).not.toBe(true);
+    expect(result.structuredContent).toEqual({ activity });
+    expectTextToMirrorStructuredContent(result as never);
+  });
+
+  it("defaults elapsed time to moving time and sends only supported fields", async () => {
+    const { call, fetchMock } = setup();
+    await call({ ...minimal, calories: 400, session_rpe: 322 });
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ ...minimal, elapsed_time: 2760 });
+  });
+
+  it("preserves supplied feedback, manual load, and calendar-event pairing", async () => {
+    const fields = { icu_rpe: 7, feel: 3, icu_training_load: 40, paired_event_id: 123456 };
+    const activity = { id: "i123456", ...minimal, ...fields, session_rpe: 322 };
+    const { call, fetchMock } = setup(activity);
+
+    const result = await call({ ...minimal, ...fields });
+
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({
+      ...minimal, elapsed_time: 2760, ...fields,
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(result.structuredContent).toEqual({ activity });
+  });
+
+  it.each([
+    { icu_rpe: 1, feel: 1, icu_training_load: 0 },
+    { icu_rpe: 10, feel: 5 },
+  ])("accepts feedback boundaries without deriving training load: %j", async fields => {
+    const { call, fetchMock } = setup();
+    await call({ ...minimal, ...fields });
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({
+      ...minimal, elapsed_time: 2760, ...fields,
+    });
+  });
+
+  it("accepts another sport, explicit elapsed time, and distance in metres", async () => {
+    const { call, fetchMock } = setup();
+    await call({ ...minimal, name: "Run", type: "Run", elapsed_time: 3000, distance: 5000 });
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({
+      ...minimal, name: "Run", type: "Run", elapsed_time: 3000, distance: 5000,
+    });
+  });
+
+  it.each([
+    { name: undefined }, { name: "   " }, { type: undefined }, { type: "" },
+    { start_date_local: undefined }, { start_date_local: "2026-02-30T07:00:00" },
+    { start_date_local: "2026-01-15" }, { start_date_local: "2026-01-15T07:00:00Z" },
+    { start_date_local: "2026-01-15T07:00:00+01:00" },
+    { moving_time: undefined }, { moving_time: 0 }, { moving_time: -1 },
+    { moving_time: 2.5 }, { moving_time: Infinity }, { moving_time: NaN },
+    { elapsed_time: 2700 }, { elapsed_time: 0 }, { elapsed_time: 3000.5 },
+    { distance: -1 }, { distance: Infinity }, { external_id: "   " },
+    { icu_rpe: 0 }, { icu_rpe: 11 }, { icu_rpe: 7.5 },
+    { feel: 0 }, { feel: 6 }, { feel: 2.5 },
+    { paired_event_id: 0 }, { paired_event_id: -1 }, { paired_event_id: 123.5 },
+    { paired_event_id: "123" },
+    { icu_training_load: -1 }, { icu_training_load: 30.5 }, { icu_training_load: Infinity },
+  ])("rejects invalid inputs before writing: %j", async invalid => {
+    const { call, fetchMock } = setup();
+    const result = await call({ ...minimal, ...invalid });
+    expect(result.isError).toBe(true);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it.each(["http", "network"])("reports %s failures as an unknown outcome without retrying", async failure => {
+    const { call, fetchMock } = setup();
+    if (failure === "http") fetchMock.mockResolvedValueOnce(new Response("Unavailable", { status: 503 }));
+    else fetchMock.mockRejectedValueOnce(new Error("Connection lost"));
+
+    const result = await call(minimal);
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toMatch(/outcome.*unknown/i);
+    expect(result.content[0].text).toMatch(/inspect.*before retrying/i);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([{}, { id: "" }, { id: "  " }, { id: 123 }, null, []].map(response => ({ response })))(
+    "does not claim success without a usable activity ID: $response", async ({ response }) => {
+      const { call, fetchMock } = setup(response);
+      const result = await call(minimal);
+      expect(result.isError).toBe(true);
+      expect(result.structuredContent).toBeUndefined();
+      expect(result.content[0].text).toMatch(/outcome.*unknown/i);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    },
+  );
+});
 
 describe("computeSampleIndices", () => {
   it("returns stride-based indices when timeData is empty", () => {

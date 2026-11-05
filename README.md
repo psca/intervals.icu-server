@@ -1,6 +1,6 @@
 # intervals-mcp
 
-An MCP (Model Context Protocol) server for [intervals.icu](https://intervals.icu) training data. Provides 30 tools for accessing activities, athlete profiles and curves, wellness data, events/workouts, workout library management and scheduling, split-workout reconciliation, weather analysis, and compact athlete-analysis workflows -- designed to be consumed by LLM-powered coaching assistants.
+An MCP (Model Context Protocol) server for [intervals.icu](https://intervals.icu) training data. Provides 32 tools for accessing, recording, and updating activities, athlete profiles and curves, wellness data, events/workouts, workout library management and scheduling, split-workout reconciliation, weather analysis, and compact athlete-analysis workflows -- designed to be consumed by LLM-powered coaching assistants.
 
 Two modes:
 - **Remote managed** -- persistent public endpoint with GitHub and Google OAuth configured, plus per-user intervals.icu credentials
@@ -84,6 +84,8 @@ Use that page to update your intervals.icu athlete ID or API key, or to disconne
 
 | Tool | Description |
 |---|---|
+| `create_completed_activity` | Record a finished manual activity, including strength sessions with exercises and sets in the description |
+| `update_completed_activity` | Edit a completed activity's supplied fields, preserving omitted values; supports feedback, load, and pairing/unpairing |
 | `get_activities` | List activities with date range and filtering |
 | `get_weekly_snapshot` | Athlete-local week progress, pairing-derived completion status, and completed/planned totals by discipline |
 | `compare_similar_activities` | Compatible-session comparison with recent, median, and per-metric evidence; bike speed affects verdicts only on the same identified route |
@@ -118,6 +120,62 @@ Use that page to update your intervals.icu athlete ID or API key, or to disconne
 Planned event writes accept either the backward-compatible date-only `start_date`
 or `start_date_local` for a specific wall-clock time in the athlete timezone configured
 in Intervals.icu. Do not append `Z` or a UTC offset to `start_date_local`.
+
+### Completed activities
+
+`create_completed_activity` records finished sessions in training history. Required
+fields are `name`, sport `type`, athlete-local `start_date_local`, and positive integer
+`moving_time` in seconds. Optional fields are `description`, `elapsed_time` (at least
+`moving_time`, defaults to it), `distance` in metres, `external_id`, `icu_rpe`
+(integer 1–10), `feel` (integer 1–5; 1=strong, 3=normal, 5=weak),
+`paired_event_id` (positive integer calendar event ID, not a library workout ID),
+and `icu_training_load` (explicit nonnegative integer load).
+
+For strength sessions, use `WeightTraining`, the recorded session duration, and a
+description containing the exercises, sets, reps, weights, and any supplied notes:
+
+```json
+{
+  "name": "Strength session",
+  "type": "WeightTraining",
+  "start_date_local": "2026-11-02T18:00:00",
+  "moving_time": 1800,
+  "description": "Romanian Deadlift (Barbell)\nSet 1: 60 kg × 10 reps\nSet 2: 60 kg × 10 reps"
+}
+```
+
+Sets are preserved as description text. The tool does not infer RPE, calories,
+training load, or active lifting time. A failed write can have an unknown outcome:
+inspect existing activities before retrying. `external_id` does not guarantee
+duplicate prevention. Use `add_or_update_event` for planned workouts.
+
+RPE and feel must be reported by the athlete. Intervals.icu calculates a separate
+`session_rpe` score from RPE and duration; it is not the `icu_training_load` used
+for fitness/fatigue calculations. Pairing requests a link to the calendar event;
+it does not copy the planned load. To record a known manual load, supply
+`icu_training_load` explicitly. No RPE-to-load conversion is performed. The API's
+returned activity is authoritative for stored feedback, load, and pairing.
+
+`update_completed_activity` edits an existing completion. Supply its `activity_id`
+and at least one of the fields supported by creation. Omitted fields retain their
+current values; duration defaults are never applied to updates. For example:
+
+```json
+{
+  "activity_id": "i123456",
+  "icu_rpe": 7,
+  "feel": 3
+}
+```
+
+This only sends RPE and feel changes. Subjective feedback must come from the
+athlete; the tool does not ask interactive questions itself or invent ratings.
+Supply `paired_event_id: null` to unpair, or omit it to preserve the existing
+pairing. `description: ""` explicitly clears notes. The tool reads the target
+first and rejects mismatched IDs or explicit different-athlete ownership. A
+duration edit is checked against the current counterpart; provide both durations
+if the existing counterpart is missing or invalid. Failed writes require
+inspection before retrying. Planned workouts use `add_or_update_event`.
 
 ### Workout Library semantics
 
@@ -315,7 +373,7 @@ src/
   formatting.ts         Human-readable formatters for activities, intervals, events, wellness
   weather.ts            Open-Meteo integration + headwind/tailwind computation
   tools/
-    activities.ts       6 tools: list, details, intervals, streams, route, weather
+    activities.ts       8 tools: create/update completed, list, details, intervals, streams, route, weather
     athlete.ts          6 tools: profile, search, power/pace/HR curves, gear
     events.ts           5 tools: list, get, create/update, delete, delete by range
     library.ts          6 tools: search, get workout, save container, save workout, confirmed delete, schedule
@@ -324,7 +382,7 @@ src/
     split-reconciliation.ts 2 tools: preview and confirmed reconciliation
     analysis.ts         3 tools: similar activity comparison, readiness, discipline trends
 test/
-  activities.test.ts, athlete.test.ts, analysis.test.ts, auth.test.ts, client.test.ts,
+  activities.test.ts, update-activity.test.ts, athlete.test.ts, analysis.test.ts, auth.test.ts, client.test.ts,
   crypto.test.ts, events.test.ts, formatting.test.ts, index.test.ts, library.test.ts,
   stdio.test.ts, weather.test.ts, weekly-snapshot.test.ts, split-reconciliation.test.ts,
   wellness.test.ts
