@@ -1,6 +1,6 @@
 # intervals-mcp
 
-An MCP (Model Context Protocol) server for [intervals.icu](https://intervals.icu) training data. Provides 32 tools for accessing, recording, and updating activities, athlete profiles and curves, wellness data, events/workouts, workout library management and scheduling, split-workout reconciliation, weather analysis, and compact athlete-analysis workflows -- designed to be consumed by LLM-powered coaching assistants.
+An MCP (Model Context Protocol) server for [intervals.icu](https://intervals.icu) training data. Provides 34 tools for accessing, recording, and updating activities, athlete profiles and curves, wellness data, events/workouts, workout library management and scheduling, split-workout reconciliation, weather analysis, and compact athlete-analysis workflows -- designed to be consumed by LLM-powered coaching assistants.
 
 Two modes:
 - **Remote managed** -- persistent public endpoint with GitHub and Google OAuth configured, plus per-user intervals.icu credentials
@@ -86,6 +86,8 @@ Use that page to update your intervals.icu athlete ID or API key, or to disconne
 |---|---|
 | `create_completed_activity` | Record a finished manual activity, including strength sessions with exercises and sets in the description |
 | `update_completed_activity` | Edit a completed activity's supplied fields, preserving omitted values; supports feedback, load, and pairing/unpairing |
+| `preview_activity_intervals` | Read-only preview of replacing an activity's intervals: maps elapsed seconds to samples around recording pauses and returns per-interval stats plus the intervals being replaced |
+| `update_activity_intervals` | Confirmed, fingerprint-protected replacement of all of an activity's intervals, then locks them unless `lock` is false |
 | `get_activities` | List activities with date range and filtering |
 | `get_weekly_snapshot` | Athlete-local week progress, pairing-derived completion status, and completed/planned totals by discipline |
 | `compare_similar_activities` | Compatible-session comparison with recent, median, and per-metric evidence; bike speed affects verdicts only on the same identified route |
@@ -170,6 +172,22 @@ current values; duration defaults are never applied to updates. For example:
 
 This only sends RPE and feel changes. Subjective feedback must come from the
 athlete; the tool does not ask interactive questions itself or invent ratings.
+
+`preview_activity_intervals` and `update_activity_intervals` replace an activity's
+intervals. Give times in elapsed seconds, as read off the chart; the tools convert
+them to stream samples around recording pauses. The list replaces every existing
+interval, so include any you want to keep. Preview first, then apply with the same
+arguments plus the returned `fingerprint` and `confirm: true` after the athlete
+approves. For example:
+
+```json
+{
+  "activity_id": "i123456",
+  "intervals": [
+    { "start_seconds": 902, "end_seconds": 1202, "type": "WORK", "label": "Rep 1" }
+  ]
+}
+```
 Supply `paired_event_id: null` to unpair, or omit it to preserve the existing
 pairing. `description: ""` explicitly clears notes. The tool reads the target
 first and rejects mismatched IDs or explicit different-athlete ownership. A
@@ -374,6 +392,7 @@ src/
   weather.ts            Open-Meteo integration + headwind/tailwind computation
   tools/
     activities.ts       8 tools: create/update completed, list, details, intervals, streams, route, weather
+    activity-intervals.ts 2 tools: preview and confirmed interval replacement
     athlete.ts          6 tools: profile, search, power/pace/HR curves, gear
     events.ts           5 tools: list, get, create/update, delete, delete by range
     library.ts          6 tools: search, get workout, save container, save workout, confirmed delete, schedule

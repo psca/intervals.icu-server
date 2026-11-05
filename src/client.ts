@@ -36,8 +36,8 @@ export class IntervalsClient {
     return res.json() as Promise<T>;
   }
 
-  async put<T>(path: string, body: unknown): Promise<T> {
-    const res = await fetch(this.url(path), {
+  async put<T>(path: string, body: unknown, params?: Record<string, string>): Promise<T> {
+    const res = await fetch(this.url(path, params), {
       method: "PUT",
       headers: {
         Authorization: this.authHeader,
