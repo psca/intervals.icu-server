@@ -18,14 +18,16 @@ const STAT_FIELDS = [
 const intervalInputSchema = z.object({
   start_seconds: z.number().int().nonnegative().describe("Start in elapsed seconds from activity start, as read off the chart"),
   end_seconds: z.number().int().positive().describe("End in elapsed seconds from activity start; the sample at this second is not included"),
-  type: z.enum(["WORK", "RECOVERY"]).default("WORK").describe("Interval type; defaults to WORK"),
+  type: z.literal("WORK", {
+    error: "Only WORK is accepted: the server stores every submitted interval as WORK. Leave recovery out and it becomes unlabelled RECOVERY automatically",
+  }).default("WORK").describe("Always WORK. Leave recovery out of the list; the server fills uncovered time as unlabelled RECOVERY"),
   label: z.string().trim().min(1).optional().describe("Optional interval label, e.g. Rep 1"),
 });
 
 const previewInputSchema = z.object({
   activity_id: z.string().trim().min(1).describe("The Intervals.icu activity ID"),
   intervals: z.array(intervalInputSchema).min(1).max(MAX_INTERVALS).describe(
-    "The complete new interval list, in order and not overlapping. Every existing interval is replaced, so include any you want to keep"
+    "The complete list of efforts, in order and not overlapping. Every existing interval is replaced, so include any effort you want to keep. Do not list recovery, warm-up, or cool-down unless they should count as WORK"
   ),
   lock: z.boolean().default(true).describe("Lock intervals after writing so reanalysis does not overwrite them; defaults to true"),
 });
@@ -38,8 +40,13 @@ const updateInputSchema = previewInputSchema.extend({
 export interface IntervalRequest {
   start_seconds: number;
   end_seconds: number;
-  type: "WORK" | "RECOVERY";
+  type: "WORK";
   label?: string;
+}
+
+interface SecondsRange {
+  start_seconds: number;
+  end_seconds: number;
 }
 
 interface RecordingGap {
@@ -49,7 +56,7 @@ interface RecordingGap {
 }
 
 export interface MappedInterval {
-  type: "WORK" | "RECOVERY";
+  type: "WORK";
   label?: string;
   start_index: number;
   end_index: number;
@@ -64,6 +71,7 @@ interface LoadedState {
   existing: RecordValue;
   previous: RecordValue[];
   mapped: MappedInterval[];
+  serverRecovery: SecondsRange[];
   fingerprint: string;
 }
 
@@ -71,7 +79,9 @@ interface LoadedState {
  * Converts elapsed seconds to stream sample indices. The two differ once recording pauses,
  * because paused seconds have no samples. Upstream intervals treat end_index as exclusive:
  * time[start_index] is the start, time[end_index] is the end, and the end of the stream is
- * end_index = time.length with an end time one second past the last sample.
+ * end_index = time.length with an end time one second past the last sample. An end at the
+ * last sample also runs to the end of the stream, because activity elapsed_time reports that
+ * second and stopping there would leave a one-sample interval behind.
  */
 export function mapIntervalsToIndices(time: number[], intervals: IntervalRequest[]): MappedInterval[] {
   const last = time[time.length - 1];
@@ -90,14 +100,15 @@ export function mapIntervalsToIndices(time: number[], intervals: IntervalRequest
     }
 
     const startIndex = firstIndexAtOrAfter(start);
-    const endIndex = firstIndexAtOrAfter(end);
+    const reachesEnd = end >= last;
+    const endIndex = reachesEnd ? time.length : firstIndexAtOrAfter(end);
     if (endIndex <= startIndex) throw new Error(`${name}: ${start}-${end}s has no recorded samples`);
 
     const actualStart = time[startIndex];
-    const actualEnd = endIndex < time.length ? time[endIndex] : endOfStream;
+    const actualEnd = reachesEnd ? endOfStream : time[endIndex];
     const warnings: string[] = [];
     if (actualStart !== start) warnings.push(`Start moved from ${start}s to ${actualStart}s because recording was paused.`);
-    if (actualEnd !== end) warnings.push(`End moved from ${end}s to ${actualEnd}s because recording was paused.`);
+    if (!reachesEnd && actualEnd !== end) warnings.push(`End moved from ${end}s to ${actualEnd}s because recording was paused.`);
 
     const recordingGaps: RecordingGap[] = [];
     for (let index = startIndex + 1; index < endIndex; index++) {
@@ -129,6 +140,22 @@ export function mapIntervalsToIndices(time: number[], intervals: IntervalRequest
     }
   });
   return mapped;
+}
+
+/** Time not covered by a submitted interval, which the server stores as unlabelled RECOVERY. */
+function uncoveredRanges(time: number[], mapped: MappedInterval[]): SecondsRange[] {
+  const ranges: SecondsRange[] = [];
+  let nextIndex = 0;
+  for (const interval of mapped) {
+    if (interval.start_index > nextIndex) {
+      ranges.push({ start_seconds: time[nextIndex], end_seconds: interval.start_seconds });
+    }
+    nextIndex = interval.end_index;
+  }
+  if (nextIndex < time.length) {
+    ranges.push({ start_seconds: time[nextIndex], end_seconds: time[time.length - 1] + 1 });
+  }
+  return ranges;
 }
 
 function usableTimeStream(streams: RecordValue[] | null): number[] {
@@ -196,7 +223,7 @@ async function loadState(
     intervals: mapped.map(writePayload),
     lock,
   });
-  return { current, existing, previous, mapped, fingerprint };
+  return { current, existing, previous, mapped, serverRecovery: uncoveredRanges(time, mapped), fingerprint };
 }
 
 async function withStats(client: IntervalsClient, activityId: string, interval: MappedInterval) {
@@ -220,12 +247,13 @@ export function registerActivityIntervalTools(server: McpServer, client: Interva
   server.registerTool(
     "preview_activity_intervals",
     {
-      description: "Preview replacing an activity's intervals. Takes times in elapsed seconds, converts them to stream sample indices around recording pauses, and returns stats per interval, pauses inside each, and the intervals being replaced. Read-only. Show the result to the athlete before calling update_activity_intervals.",
+      description: "Preview replacing an activity's intervals. Takes times in elapsed seconds, converts them to stream sample indices around recording pauses, and returns stats per interval, pauses inside each, the time the server will fill as unlabelled recovery, and the intervals being replaced. List efforts only. Read-only. Show the result to the athlete before calling update_activity_intervals.",
       inputSchema: previewInputSchema.shape,
       outputSchema: {
         activity_id: z.string(),
         lock: z.boolean(),
         intervals: z.array(recordSchema),
+        server_recovery: z.array(recordSchema),
         replaces: z.array(recordSchema),
         fingerprint: z.string(),
       },
@@ -238,6 +266,7 @@ export function registerActivityIntervalTools(server: McpServer, client: Interva
           activity_id,
           lock,
           intervals: await Promise.all(state.mapped.map(interval => withStats(client, activity_id, interval))),
+          server_recovery: state.serverRecovery,
           replaces: state.previous,
           fingerprint: state.fingerprint,
         });
@@ -281,11 +310,13 @@ export function registerActivityIntervalTools(server: McpServer, client: Interva
         }
 
         const written = intervalList(response);
-        const verified = state.mapped.every(wanted => written.some(interval =>
+        const warnings = state.mapped.flatMap((wanted, position) => written.some(interval =>
           interval.start_index === wanted.start_index
           && interval.end_index === wanted.end_index
           && interval.type === wanted.type
-        ));
+        ) ? [] : [
+          `Interval ${position + 1} was not returned as ${wanted.type} at samples ${wanted.start_index}-${wanted.end_index}. Inspect the activity.`,
+        ]);
 
         let locked = state.current.lock_intervals === true;
         let lockError: string | null = null;
@@ -303,12 +334,12 @@ export function registerActivityIntervalTools(server: McpServer, client: Interva
         return textResult({
           applied: true,
           activity_id,
-          verified,
+          verified: warnings.length === 0,
           locked,
           lock_error: lockError,
           intervals: written.map(compactInterval),
           previous_intervals: state.previous,
-          warnings: verified ? [] : ["The response did not contain every requested interval. Inspect the activity."],
+          warnings,
         });
       } catch (error) {
         return errorResult("updating activity intervals", error);

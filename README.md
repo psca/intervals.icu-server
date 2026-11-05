@@ -176,7 +176,9 @@ athlete; the tool does not ask interactive questions itself or invent ratings.
 `preview_activity_intervals` and `update_activity_intervals` replace an activity's
 intervals. Give times in elapsed seconds, as read off the chart; the tools convert
 them to stream samples around recording pauses. The list replaces every existing
-interval, so include any you want to keep. Preview first, then apply with the same
+interval, so include any effort you want to keep. List efforts only: Intervals.icu stores
+every submitted interval as `WORK` and fills the remaining time as unlabelled
+`RECOVERY`, so `RECOVERY` input is rejected. Preview first, then apply with the same
 arguments plus the returned `fingerprint` and `confirm: true` after the athlete
 approves. For example:
 

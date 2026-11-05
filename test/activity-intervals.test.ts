@@ -122,6 +122,12 @@ describe("mapIntervalsToIndices", () => {
     expect([mapped.start_index, mapped.end_index, mapped.end_seconds]).toEqual([5, 10, 15]);
   });
 
+  it("runs an interval ending at the last sample to the end of the stream", () => {
+    const [mapped] = mapIntervalsToIndices(REAL_TIME, [{ start_seconds: 3469, end_seconds: 3771, type: "WORK" }]);
+    expect([mapped.start_index, mapped.end_index, mapped.end_seconds]).toEqual([3197, 3500, 3772]);
+    expect(mapped.warnings).toEqual([]);
+  });
+
   it("snaps a boundary inside a recording pause forward and reports it", () => {
     const [mapped] = mapIntervalsToIndices(TIME, [{ start_seconds: 6, end_seconds: 12, type: "WORK" }]);
     expect([mapped.start_index, mapped.start_seconds]).toEqual([5, 10]);
@@ -179,6 +185,33 @@ describe("preview_activity_intervals", () => {
       elapsed_time: 11, moving_time: 6, average_watts: 240, weighted_average_watts: 245, intensity: 96,
       average_heartrate: 160, max_heartrate: 172, average_cadence: 94, training_load: 12,
     });
+  });
+
+  it("shows the time the server will fill as unlabelled recovery", async () => {
+    const ctx = setup();
+    const result = await ctx.preview({ activity_id: ACTIVITY_ID, intervals: REPS });
+    expect((result.structuredContent as Record<string, unknown>).server_recovery).toEqual([
+      { start_seconds: 0, end_seconds: 1 },
+      { start_seconds: 12, end_seconds: 15 },
+    ]);
+  });
+
+  it("omits server recovery when the intervals cover the whole recording", async () => {
+    const ctx = setup();
+    const result = await ctx.preview({
+      activity_id: ACTIVITY_ID, intervals: [{ start_seconds: 0, end_seconds: 14 }],
+    });
+    expect((result.structuredContent as Record<string, unknown>).server_recovery).toEqual([]);
+  });
+
+  it("rejects RECOVERY intervals, which the server would store as WORK", async () => {
+    const ctx = setup();
+    const result = await ctx.preview({
+      activity_id: ACTIVITY_ID, intervals: [{ start_seconds: 1, end_seconds: 12, type: "RECOVERY" }],
+    });
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toMatch(/Leave recovery out/);
+    expect(ctx.fetchMock).not.toHaveBeenCalled();
   });
 
   it("asks the server for stats using the mapped sample indices", async () => {
@@ -324,7 +357,25 @@ describe("update_activity_intervals", () => {
       putIntervals: { id: ACTIVITY_ID, icu_intervals: [{ start_index: 2, end_index: 7, type: "WORK" }] },
     });
     expect(output).toMatchObject({ applied: true, verified: false });
-    expect(output.warnings).toEqual(["The response did not contain every requested interval. Inspect the activity."]);
+    expect(output.warnings).toEqual(["Interval 1 was not returned as WORK at samples 1-7. Inspect the activity."]);
+  });
+
+  it("flags an interval the server returned with a different type", async () => {
+    const { output } = await apply({
+      putIntervals: { id: ACTIVITY_ID, icu_intervals: [{ start_index: 1, end_index: 7, type: "RECOVERY" }] },
+    });
+    expect(output).toMatchObject({ applied: true, verified: false });
+  });
+
+  it("stays verified when the server adds its own recovery intervals", async () => {
+    const { output } = await apply({
+      putIntervals: { id: ACTIVITY_ID, icu_intervals: [
+        { start_index: 0, end_index: 1, type: "RECOVERY", label: null },
+        { start_index: 1, end_index: 7, type: "WORK", label: "Rep 1" },
+        { start_index: 7, end_index: 10, type: "RECOVERY", label: null },
+      ] },
+    });
+    expect(output).toMatchObject({ applied: true, verified: true, warnings: [] });
   });
 
   it("reports a partial result when locking fails after the intervals were written", async () => {
