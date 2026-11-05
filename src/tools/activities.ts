@@ -4,10 +4,54 @@ import { IntervalsClient } from "../client.js";
 import { computeActivityWeather } from "../weather.js";
 import { defaultDateRange } from "../utils.js";
 import { errorResult, textResult, type ToolTextResult } from "./result.js";
+import { localTimestampSchema } from "./events.js";
 
 type ActivityRecord = Record<string, unknown>;
 
 const activityObjectSchema = z.record(z.string(), z.unknown());
+
+const completedActivityInputSchema = z.object({
+  name: z.string().trim().min(1).describe("Completed session title"),
+  type: z.string().trim().min(1).describe("Sport type, e.g. WeightTraining, Run, Ride, Swim"),
+  start_date_local: localTimestampSchema.describe(
+    "Athlete-local start time YYYY-MM-DDTHH:mm:ss in the timezone configured in Intervals.icu; do not append Z or an offset"
+  ),
+  moving_time: z.number().int().positive().describe(
+    "Recorded session duration in seconds; for strength training use the session duration, not an estimate of active lifting time"
+  ),
+  elapsed_time: z.number().int().positive().optional().describe(
+    "Total elapsed seconds, at least moving_time; defaults to moving_time"
+  ),
+  description: z.string().optional().describe(
+    "Completed session notes; preserve strength exercises, sets, reps, and weights here"
+  ),
+  distance: z.number().finite().nonnegative().optional().describe("Recorded distance in metres"),
+  external_id: z.string().trim().min(1).optional().describe(
+    "Optional source identifier; does not guarantee duplicate prevention"
+  ),
+  icu_rpe: z.number().int().min(1).max(10).optional().describe(
+    "Athlete-reported whole-session effort, 1–10. Intervals.icu derives session_rpe separately; this does not set training load"
+  ),
+  feel: z.number().int().min(1).max(5).optional().describe(
+    "Athlete-reported feel: 1=strong, 3=normal, 5=weak"
+  ),
+  paired_event_id: z.number().int().positive().optional().describe(
+    "Calendar event ID to pair with this completion, not a library workout ID. Does not copy planned training load"
+  ),
+  icu_training_load: z.number().int().nonnegative().optional().describe(
+    "Explicit supplied training load. Do not derive from RPE or copy planned load automatically; session_rpe uses a different scale"
+  ),
+});
+
+const updateCompletedActivityInputSchema = completedActivityInputSchema.partial().extend({
+  activity_id: z.string().trim().min(1).describe("ID of the completed activity to update"),
+  elapsed_time: completedActivityInputSchema.shape.elapsed_time.describe(
+    "New total elapsed seconds, at least the effective moving_time; omit to preserve the existing elapsed time"
+  ),
+  paired_event_id: completedActivityInputSchema.shape.paired_event_id.unwrap().nullable().optional().describe(
+    "Calendar event ID to pair with this completion, or null to unpair. Omit to preserve the existing pairing"
+  ),
+});
 
 async function withActivityToolResult(
   errorLabel: string,
@@ -34,6 +78,87 @@ export function computeSampleIndices(timeData: number[], totalPoints: number, in
 }
 
 export function registerActivityTools(server: McpServer, client: IntervalsClient): void {
+  server.registerTool(
+    "create_completed_activity",
+    {
+      description: "Create a completed manual activity, including strength sessions (WeightTraining). " +
+        "Store exercises, sets, reps, and weights in description. Use only recorded values; never invent RPE, calories, or training load. " +
+        "Optional fields record reported RPE/feel, an explicit training load, and a planned calendar event pairing. RPE and pairing do not automatically set training load. " +
+        "This creates training history; use add_or_update_event for planned workouts. " +
+        "A failed write may have succeeded: inspect activities before retrying to avoid duplicates.",
+      inputSchema: completedActivityInputSchema.shape,
+      outputSchema: { activity: activityObjectSchema },
+    },
+    async args => withActivityToolResult("creating completed activity", async () => {
+      const input = completedActivityInputSchema.parse(args);
+      const elapsedTime = input.elapsed_time ?? input.moving_time;
+      if (elapsedTime < input.moving_time) {
+        throw new Error("elapsed_time must be at least moving_time");
+      }
+
+      try {
+        const activity = await client.post<ActivityRecord | null>(
+          `/athlete/${client.athleteId}/activities/manual`,
+          { ...input, elapsed_time: elapsedTime },
+        );
+        if (!activity || typeof activity.id !== "string" || !activity.id.trim()) {
+          throw new Error("Intervals.icu returned no usable activity ID");
+        }
+        return textResult({ activity });
+      } catch (error) {
+        throw new Error(
+          `Activity creation outcome is unknown. Inspect activities before retrying to avoid duplicates. ${error}`
+        );
+      }
+    }),
+  );
+
+  server.registerTool(
+    "update_completed_activity",
+    {
+      description: "Update an existing completed activity using only explicitly supplied fields. " +
+        "Supports notes, title, sport, date/time, duration, distance, source ID, reported RPE/feel, explicit load, and calendar pairing. " +
+        "Omitted fields are preserved; paired_event_id=null unpairs. " +
+        "Never infer feedback or training load. Ask the athlete for any missing subjective rating they want recorded. " +
+        "Use add_or_update_event for planned workouts. A failed write may have succeeded; inspect the activity before retrying.",
+      inputSchema: updateCompletedActivityInputSchema.shape,
+      outputSchema: { activity: activityObjectSchema },
+    },
+    async args => withActivityToolResult("updating completed activity", async () => {
+      const { activity_id, ...parsedChanges } = updateCompletedActivityInputSchema.parse(args);
+      const changes = Object.fromEntries(Object.entries(parsedChanges).filter(([, value]) => value !== undefined));
+      if (!Object.keys(changes).length) throw new Error("Provide at least one supported field to update");
+
+      const path = `/activity/${encodeURIComponent(activity_id)}`;
+      const current = await client.get<ActivityRecord | null>(path);
+      if (!current || current.id !== activity_id) throw new Error("Target activity was not found or its ID did not match");
+      if (current.icu_athlete_id != null && current.icu_athlete_id !== client.athleteId) {
+        throw new Error("Target activity belongs to a different athlete");
+      }
+
+      if (changes.moving_time !== undefined || changes.elapsed_time !== undefined) {
+        const movingTime = completedActivityInputSchema.shape.moving_time.safeParse(changes.moving_time ?? current.moving_time);
+        const elapsedTime = completedActivityInputSchema.shape.elapsed_time.unwrap().safeParse(changes.elapsed_time ?? current.elapsed_time);
+        if (!movingTime.success || !elapsedTime.success) {
+          throw new Error("Existing duration is unavailable or invalid; supply both moving_time and elapsed_time");
+        }
+        if (elapsedTime.data < movingTime.data) throw new Error("elapsed_time must be at least moving_time");
+      }
+
+      try {
+        const activity = await client.put<ActivityRecord | null>(path, { id: activity_id, ...changes });
+        if (!activity || activity.id !== activity_id) {
+          throw new Error("Intervals.icu returned no matching activity ID");
+        }
+        return textResult({ activity });
+      } catch (error) {
+        throw new Error(
+          `Activity update outcome is unknown. Inspect activity ${activity_id} before retrying. ${error}`
+        );
+      }
+    }),
+  );
+
   server.registerTool(
     "get_activities",
     {
