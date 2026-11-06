@@ -6,6 +6,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { IntervalsClient } from "./client.js";
 import { registerActivityTools } from "./tools/activities.js";
+import { registerActivityIntervalTools } from "./tools/activity-intervals.js";
 import { registerAthleteTools } from "./tools/athlete.js";
 import { registerEventTools } from "./tools/events.js";
 import { registerLibraryTools } from "./tools/library.js";
@@ -25,6 +26,7 @@ export async function createStdioServer(
   const server = new McpServer({ name: "intervals-mcp", version: "1.0.0" });
 
   registerActivityTools(server, client);
+  registerActivityIntervalTools(server, client);
   registerAthleteTools(server, client);
   registerEventTools(server, client);
   registerLibraryTools(server, client);

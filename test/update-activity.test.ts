@@ -101,7 +101,10 @@ describe("update_completed_activity", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it.each([null, {}, { ...existing, id: "i999" }, { ...existing, icu_athlete_id: "i999" }].map(current => ({ current })))(
+  it.each([
+    null, {}, { ...existing, id: "i999" }, { ...existing, icu_athlete_id: "i999" },
+    { ...existing, icu_athlete_id: null }, { ...existing, icu_athlete_id: undefined },
+  ].map(current => ({ current })))(
     "does not write to a missing, mismatched, or different-athlete target: $current", async ({ current }) => {
       const { call, fetchMock } = setup(current);
       const result = await call({ activity_id: "i123456", icu_rpe: 7 });

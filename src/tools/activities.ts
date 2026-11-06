@@ -132,8 +132,8 @@ export function registerActivityTools(server: McpServer, client: IntervalsClient
       const path = `/activity/${encodeURIComponent(activity_id)}`;
       const current = await client.get<ActivityRecord | null>(path);
       if (!current || current.id !== activity_id) throw new Error("Target activity was not found or its ID did not match");
-      if (current.icu_athlete_id != null && current.icu_athlete_id !== client.athleteId) {
-        throw new Error("Target activity belongs to a different athlete");
+      if (current.icu_athlete_id !== client.athleteId) {
+        throw new Error("Target activity belongs to a different athlete or its owner could not be verified");
       }
 
       if (changes.moving_time !== undefined || changes.elapsed_time !== undefined) {
